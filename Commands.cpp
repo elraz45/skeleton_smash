@@ -80,7 +80,7 @@ void _removeBackgroundSign(char *cmd_line) {
 
 
 //-----------------------------------------------Helper Functions-------------------------------------------------------
-char **getArgs(const char *cmd_line, int *numArgs)
+char **extractArguments(const char *cmd_line, int *numArgs)
 {
   // Remove background sign if exists:
   char cmd[COMMAND_MAX_LENGTH];
@@ -102,7 +102,7 @@ char **getArgs(const char *cmd_line, int *numArgs)
   return args;
 }
 
-void deleteArgs(char **args)
+void deleteArguments(char **args)
 {
   // Delete each argument in args:
   for (int i = 0; i < COMMAND_MAX_ARGS + 1; i++)
@@ -113,21 +113,21 @@ void deleteArgs(char **args)
   free(args);
 }
 
-bool checkFullPath(char *newPath)
+bool isFullPath(char *newPath)
 {
   if (newPath[0] == '/')
     return true;
   return false;
 }
 
-char *goUp(char *dir)
+char *goToParentDir(char *dir)
 {
   if (!strcmp(dir, "/"))
   {
     return dir;
   }
-  int cut = string(dir).find_last_of("/");
-  dir[cut] = '\0';
+  int stopIndex = string(dir).find_last_of("/");
+  dir[stopIndex] = '\0';
   return dir;
 }
 
@@ -141,10 +141,10 @@ Command::~Command()
   m_cmd_line = nullptr;
 }
 
-void Command::firstUpdateCurrDir()
+void Command::initialCurrDir()
 {
   SmallShell &smash = SmallShell::getInstance();
-  char *buffer = (char *)malloc(PATH_MAX * sizeof(char) + 1);
+  char *buffer = (char *)malloc((PATH_MAX + 1) * sizeof(char));
   if (!buffer)
   {
     free(buffer);
@@ -174,17 +174,17 @@ ChangePromptCommand::ChangePromptCommand(const char* cmd_line) : BuiltInCommand(
 
 void ChangePromptCommand::execute() {
   int numArgs = 0;
-  char **args = getArgs(this->m_cmd_line, &numArgs);
+  char **args = extractArguments(this->m_cmd_line, &numArgs);
   SmallShell &smash = SmallShell::getInstance();
   if (numArgs == 1)
   {
-    smash.chngPrompt();
+    smash.changePrompt();
   }
   else
   {
-    smash.chngPrompt(string(args[1]));
+    smash.changePrompt(string(args[1]));
   }
-  deleteArgs(args);
+  deleteArguments(args);
 }
 
 
@@ -206,7 +206,7 @@ void GetCurrDirCommand::execute()
   SmallShell &smash = SmallShell::getInstance();
   if (!strcmp(smash.getCurrDir(), ""))
   {
-    firstUpdateCurrDir();
+    initialCurrDir();
   }
   cout << string(smash.getCurrDir()) << endl;
 }
@@ -221,20 +221,20 @@ void ChangeDirCommand::execute()
   SmallShell &smash = SmallShell::getInstance();
   if (!strcmp(smash.getCurrDir(), ""))
   {
-    firstUpdateCurrDir();
+    initialCurrDir();
   }
   int numArgs = 0;
-  char **args = getArgs(this->m_cmd_line, &numArgs);
-  if (numArgs > 2) // The command itself counts as an arg
+  char **args = extractArguments(this->m_cmd_line, &numArgs);
+  if (numArgs > 2) 
   {
     cerr << "smash error: cd: too many arguments" << endl;
-    deleteArgs(args);
+    deleteArguments(args);
     return;
   }
   else if (!strcmp(*m_plastPwd, "") && string(args[1]) == "-")
   {
     cerr << "smash error: cd: OLDPWD not set" << endl;
-    deleteArgs(args);
+    deleteArguments(args);
     return;
   }
   else if (string(args[1]) == "-")
@@ -242,34 +242,34 @@ void ChangeDirCommand::execute()
     if (chdir(*m_plastPwd) == -1)
     {
       perror("smash error: chdir failed");
-      deleteArgs(args);
+      deleteArguments(args);
       return;
     }
-    // Switch current and previous directories
+    // Switch between current and previous directories
     char temp[PATH_MAX + 1];
     strcpy(temp, smash.getPrevDir());
     smash.setPrevDir();
     smash.setCurrDir(temp);
-    deleteArgs(args);
+    deleteArguments(args);
     return;
   }
   if (chdir(args[1]) == -1)
   {
     perror("smash error: chdir failed");
-    deleteArgs(args);
+    deleteArguments(args);
     return;
   }
   // If the given "path" is to go up, remove the last part of the current path
   if (string(args[1]) == "..")
   {
     smash.setPrevDir();
-    goUp(smash.getCurrDir());
-    deleteArgs(args);
+    goToParentDir(smash.getCurrDir());
+    deleteArguments(args);
     return;
   }
 
   // If the new path is the full path, set currDir equal to it
-  if (checkFullPath(args[1]))
+  if (isFullPath(args[1]))
   {
     smash.setPrevDir();
     smash.setCurrDir(args[1]);
@@ -280,7 +280,7 @@ void ChangeDirCommand::execute()
     smash.setPrevDir();
     smash.setCurrDir(smash.getCurrDir(), args[1]);
   }
-  deleteArgs(args);
+  deleteArguments(args);
 }
 
 
@@ -333,7 +333,7 @@ std::string SmallShell::getPrompt() const
   return m_prompt;
 }
 
-void SmallShell::chngPrompt(const std::string& new_prompt) {
+void SmallShell::changePrompt(const std::string& new_prompt) {
   m_prompt = new_prompt;
 }
 /**

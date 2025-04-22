@@ -23,7 +23,7 @@ protected:
     // command line
     const char *m_cmd_line; 
 
-    void firstUpdateCurrDir();
+    void initialCurrDir();
 };
 
 class BuiltInCommand : public Command {
@@ -293,7 +293,7 @@ public:
 
     std::string getPrompt() const;
 
-    void chngPrompt(const std::string& new_prompt = "smash");
+    void changePrompt(const std::string& new_prompt = "smash");
 
     void setCurrDir(char *currDir, char *toCombine = nullptr);
 
