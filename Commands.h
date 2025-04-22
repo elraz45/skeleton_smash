@@ -188,6 +188,9 @@ public:
 
     JobEntry *getLastStoppedJob(int *jobId);
 
+    int getMaxId();
+
+    bool isEmpty() const;
 
     // TODO: Add extra methods or modify exisitng ones as needed
 
@@ -223,7 +226,8 @@ public:
 };
 
 class ForegroundCommand : public BuiltInCommand {
-    // TODO: Add your data members
+private:
+    JobsList *m_jobs;
 public:
     ForegroundCommand(const char *cmd_line, JobsList *jobs);
 
@@ -282,8 +286,10 @@ private:
     char *m_prevDir;
     JobsList jobs;
 
+
 public:
-    static pid_t m_pid;
+    static pid_t m_shellPid;
+    int m_foregroundPid;
 
     SmallShell(SmallShell const &) = delete; // disable copy ctor
     void operator=(SmallShell const &) = delete; // disable = operator
