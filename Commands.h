@@ -22,6 +22,8 @@ public:
 protected:
     // command line
     const char *m_cmd_line; 
+
+    void firstUpdateCurrDir();
 };
 
 class BuiltInCommand : public Command {
@@ -98,13 +100,17 @@ public:
 
 
 class ChangeDirCommand : public BuiltInCommand {
-    // TODO: Add your data members public:
+    // TODO: Add your data members
+    public:
     ChangeDirCommand(const char *cmd_line, char **plastPwd);
 
     virtual ~ChangeDirCommand() {
     }
 
     void execute() override;
+
+    private:
+    char **m_plastPwd;
 };
 
 class GetCurrDirCommand : public BuiltInCommand {
@@ -117,6 +123,16 @@ public:
     void execute() override;
 };
 
+class ChangePromptCommand : public BuiltInCommand {
+    public:
+    ChangePromptCommand(const char *cmd_line);
+
+        virtual ~ChangePromptCommand() {
+        }
+
+        void execute() override;
+    };
+
 class ShowPidCommand : public BuiltInCommand {
 public:
     ShowPidCommand(const char *cmd_line);
@@ -126,6 +142,10 @@ public:
 
     void execute() override;
 };
+
+
+
+
 
 class JobsList;
 
@@ -249,8 +269,12 @@ private:
     // TODO: Add your data members
     SmallShell();
     std::string m_prompt;
+    char *m_currDir;
+    char *m_prevDir;
 
 public:
+
+    static pid_t m_pid;
 
     SmallShell(SmallShell const &) = delete; // disable copy ctor
     void operator=(SmallShell const &) = delete; // disable = operator
@@ -270,23 +294,15 @@ public:
     std::string getPrompt() const;
 
     void chngPrompt(const std::string& new_prompt = "smash");
+
+    void setCurrDir(char *currDir, char *toCombine = nullptr);
+
+    char *getCurrDir() const;
+
+    void setPrevDir();
+
+    char *getPrevDir() const;
+
 };
-
-
-
-
-
-
-class ChpromptCommand : public BuiltInCommand {
-    public:
-        ChpromptCommand(const char *cmd_line);
-
-        virtual ~ChpromptCommand() {
-        }
-
-        void execute() override;
-    };
-
-
 
 #endif //SMASH_COMMAND_H_

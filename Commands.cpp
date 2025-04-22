@@ -6,6 +6,8 @@
 #include <sys/wait.h>
 #include <iomanip>
 #include "Commands.h"
+#include <limits.h>
+
 
 using namespace std;
 
@@ -111,6 +113,25 @@ void deleteArgs(char **args)
   free(args);
 }
 
+bool checkFullPath(char *newPath)
+{
+  if (newPath[0] == '/')
+    return true;
+  return false;
+}
+
+char *goUp(char *dir)
+{
+  if (!strcmp(dir, "/"))
+  {
+    return dir;
+  }
+  int cut = string(dir).find_last_of("/");
+  dir[cut] = '\0';
+  return dir;
+}
+
+
 //-----------------------------------------------Command-----------------------------------------------
 
 Command::Command(const char *cmd_line) : m_cmd_line(cmd_line) {}
@@ -118,6 +139,27 @@ Command::Command(const char *cmd_line) : m_cmd_line(cmd_line) {}
 Command::~Command()
 {
   m_cmd_line = nullptr;
+}
+
+void Command::firstUpdateCurrDir()
+{
+  SmallShell &smash = SmallShell::getInstance();
+  char *buffer = (char *)malloc(PATH_MAX * sizeof(char) + 1);
+  if (!buffer)
+  {
+    free(buffer);
+    cerr << "smash error: malloc failed" << endl;
+    return;
+  }
+  buffer = getcwd(buffer, PATH_MAX);
+  if (!buffer)
+  {
+    free(buffer);
+    perror("smash error: getcwd failed");
+    return;
+  }
+  smash.setCurrDir(buffer);
+  free(buffer);
 }
 
 
@@ -128,9 +170,9 @@ BuiltInCommand::BuiltInCommand(const char *cmd_line) : Command::Command(cmd_line
 
 //-------------------------------------ChangePromptCommand-------------------------------------
 
-ChpromptCommand::ChpromptCommand(const char* cmd_line) : BuiltInCommand(cmd_line) {}
+ChangePromptCommand::ChangePromptCommand(const char* cmd_line) : BuiltInCommand(cmd_line) {}
 
-void ChpromptCommand::execute() {
+void ChangePromptCommand::execute() {
   int numArgs = 0;
   char **args = getArgs(this->m_cmd_line, &numArgs);
   SmallShell &smash = SmallShell::getInstance();
@@ -146,20 +188,145 @@ void ChpromptCommand::execute() {
 }
 
 
+//-------------------------------------ShowPidCommand-------------------------------------
+
+ShowPidCommand::ShowPidCommand(const char* cmd_line) : BuiltInCommand(cmd_line) {}
+
+void ShowPidCommand::execute() {
+  SmallShell &smash = SmallShell::getInstance();
+  cout << "smash pid is " << smash.m_pid << endl;
+}
+
+//-------------------------------------GetCurrDirCommand-------------------------------------
+
+GetCurrDirCommand::GetCurrDirCommand(const char *cmd_line) : BuiltInCommand(cmd_line) {}
+
+void GetCurrDirCommand::execute()
+{
+  SmallShell &smash = SmallShell::getInstance();
+  if (!strcmp(smash.getCurrDir(), ""))
+  {
+    firstUpdateCurrDir();
+  }
+  cout << string(smash.getCurrDir()) << endl;
+}
+
+//-------------------------------------ChangeDirCommand-------------------------------------
+
+ChangeDirCommand::ChangeDirCommand(const char *cmd_line, char **plastPwd) : BuiltInCommand(cmd_line),
+                                                                            m_plastPwd(plastPwd) {}
+
+void ChangeDirCommand::execute()
+{
+  SmallShell &smash = SmallShell::getInstance();
+  if (!strcmp(smash.getCurrDir(), ""))
+  {
+    firstUpdateCurrDir();
+  }
+  int numArgs = 0;
+  char **args = getArgs(this->m_cmd_line, &numArgs);
+  if (numArgs > 2) // The command itself counts as an arg
+  {
+    cerr << "smash error: cd: too many arguments" << endl;
+    deleteArgs(args);
+    return;
+  }
+  else if (!strcmp(*m_plastPwd, "") && string(args[1]) == "-")
+  {
+    cerr << "smash error: cd: OLDPWD not set" << endl;
+    deleteArgs(args);
+    return;
+  }
+  else if (string(args[1]) == "-")
+  {
+    if (chdir(*m_plastPwd) == -1)
+    {
+      perror("smash error: chdir failed");
+      deleteArgs(args);
+      return;
+    }
+    // Switch current and previous directories
+    char temp[PATH_MAX + 1];
+    strcpy(temp, smash.getPrevDir());
+    smash.setPrevDir();
+    smash.setCurrDir(temp);
+    deleteArgs(args);
+    return;
+  }
+  if (chdir(args[1]) == -1)
+  {
+    perror("smash error: chdir failed");
+    deleteArgs(args);
+    return;
+  }
+  // If the given "path" is to go up, remove the last part of the current path
+  if (string(args[1]) == "..")
+  {
+    smash.setPrevDir();
+    goUp(smash.getCurrDir());
+    deleteArgs(args);
+    return;
+  }
+
+  // If the new path is the full path, set currDir equal to it
+  if (checkFullPath(args[1]))
+  {
+    smash.setPrevDir();
+    smash.setCurrDir(args[1]);
+  }
+  // If not, append the new folder to the end of the current path
+  else
+  {
+    smash.setPrevDir();
+    smash.setCurrDir(smash.getCurrDir(), args[1]);
+  }
+  deleteArgs(args);
+}
+
+
+
+
+
+void QuitCommand::execute() {
+  // TODO: Add implementation
+}
+
+void RedirectionCommand::execute() {
+  // TODO: Add implementation
+}
+
 
 
 
 
 //-------------------------------------SmallShell-------------------------------------
 
-//
+
 SmallShell::SmallShell(): m_prompt("smash") {
-// TODO: add your implementation
+  m_prevDir = (char *)malloc((PATH_MAX + 1) * sizeof(char));
+  if (m_prevDir == nullptr)
+  {
+    free(m_prevDir);
+    cerr << "smash error: malloc failed" << endl;
+    return;
+  }
+  m_currDir = (char *)malloc((PATH_MAX + 1) * sizeof(char));
+  strcpy(m_currDir, "");
+  if (m_currDir == nullptr)
+  {
+    free(m_currDir);
+    cerr << "smash error: malloc failed" << endl;
+    return;
+  }
+  strcpy(m_currDir, "");
+
 }
 
 SmallShell::~SmallShell() {
 // TODO: add your implementation
 }
+
+pid_t SmallShell::m_pid = getpid();
 
 std::string SmallShell::getPrompt() const
 {
@@ -195,12 +362,23 @@ Command *SmallShell::CreateCommand(const char *cmd_line) {
   string firstWord = cmd_s.substr(0, cmd_s.find_first_of(" \n"));
 
   if (firstWord.compare("chprompt") == 0) {
-    return new ChpromptCommand(cmd_line);
+    return new ChangePromptCommand(cmd_line);
   }
+  else if (firstWord.compare("showpid") == 0) {
+    return new ShowPidCommand(cmd_line);
+  }
+  else if (firstWord.compare("pwd") == 0) {
+    return new GetCurrDirCommand(cmd_line);
+  }
+  else if (firstWord.compare("cd") == 0) {
+    return new ChangeDirCommand(cmd_line, &m_prevDir);
+  }
+    
 
 
     return nullptr;
 }
+
 
 void SmallShell::executeCommand(const char *cmd_line) {
     // TODO: Add your implementation here
@@ -224,10 +402,49 @@ void SmallShell::executeCommand(const char *cmd_line) {
     delete cmd;
 }
 
-void QuitCommand::execute() {
-    // TODO: Add implementation
+
+
+char *SmallShell::getCurrDir() const
+{
+  return m_currDir;
 }
 
-void RedirectionCommand::execute() {
-    // TODO: Add implementation
+void SmallShell::setCurrDir(char *currDir, char *toCombine)
+{
+  if (toCombine == nullptr)
+  {
+    strcpy(m_currDir, currDir);
+    return;
+  }
+  int length = string(currDir).length() + string(toCombine).length() + 2;
+  char *temp = (char *)malloc(length * sizeof(char));
+  if (temp == nullptr)
+  {
+    free(temp);
+    cerr << "smash error: malloc failed" << endl;
+    return;
+  }
+  strcpy(temp, currDir);
+  if (strcmp(currDir, "/") != 0)
+  {
+    strcat(temp, "/");
+  }
+  strcat(temp, toCombine);
+  strcpy(m_currDir, temp);
+  free(temp);
 }
+
+char *SmallShell::getPrevDir() const
+{
+  return m_prevDir;
+}
+
+void SmallShell::setPrevDir()
+{
+  strcpy(m_prevDir, m_currDir);
+}
+
+
+
+
+
