@@ -7,8 +7,9 @@
 #define COMMAND_MAX_LENGTH (200)
 #define COMMAND_MAX_ARGS (20)
 
+class JobsList;
+
 class Command {
-    // TODO: Add your data members
 public:
     Command(const char *cmd_line);
 
@@ -143,12 +144,6 @@ public:
     void execute() override;
 };
 
-
-
-
-
-class JobsList;
-
 class QuitCommand : public BuiltInCommand {
     // TODO: Add your data members public:
     QuitCommand(const char *cmd_line, JobsList *jobs);
@@ -163,16 +158,21 @@ class QuitCommand : public BuiltInCommand {
 class JobsList {
 public:
     class JobEntry {
-        // TODO: Add your data members
+        public:
+        JobEntry(int jobId, pid_t pid, const char *cmd, bool isStopped = false);
+        ~JobEntry(){}
+        int m_jobId;
+        pid_t m_pid;
+        char m_cmd[COMMAND_MAX_LENGTH + 1];
+        bool m_isStopped;
     };
 
     // TODO: Add your data members
-public:
-    JobsList();
+    JobsList() = default;
 
-    ~JobsList();
+    ~JobsList() = default;
 
-    void addJob(Command *cmd, bool isStopped = false);
+    void addJob(const char *cmd, pid_t pid, bool isStopped = false);
 
     void printJobsList();
 
@@ -188,19 +188,28 @@ public:
 
     JobEntry *getLastStoppedJob(int *jobId);
 
+
     // TODO: Add extra methods or modify exisitng ones as needed
+
+    private:
+    std::vector<JobEntry> m_list;
+    int m_jobIdCounter = 0;
 };
 
 class JobsCommand : public BuiltInCommand {
     // TODO: Add your data members
 public:
-    JobsCommand(const char *cmd_line, JobsList *jobs);
+    JobsCommand(const char *cmd_line);
 
     virtual ~JobsCommand() {
     }
 
     void execute() override;
 };
+
+
+
+
 
 class KillCommand : public BuiltInCommand {
     // TODO: Add your data members
@@ -271,9 +280,9 @@ private:
     std::string m_prompt;
     char *m_currDir;
     char *m_prevDir;
+    JobsList jobs;
 
 public:
-
     static pid_t m_pid;
 
     SmallShell(SmallShell const &) = delete; // disable copy ctor
@@ -302,6 +311,8 @@ public:
     void setPrevDir();
 
     char *getPrevDir() const;
+
+    JobsList *getAllJobs();
 
 };
 

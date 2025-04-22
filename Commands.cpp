@@ -163,6 +163,58 @@ void Command::initialCurrDir()
 }
 
 
+//-----------------------------------------------Jobs-----------------------------------------------
+JobsList::JobEntry::JobEntry(int jobId, pid_t pid, const char *cmd, bool isStopped) :
+  m_jobId(jobId),
+  m_pid(pid),
+  m_isStopped(isStopped)
+{
+  strcpy(m_cmd, cmd);
+}
+
+void JobsList::addJob(const char *cmd, pid_t pid, bool isStopped)
+{
+  removeFinishedJobs();
+  int jobId = m_jobIdCounter + 1;
+  m_jobIdCounter++;
+  JobEntry newJob(jobId, pid, cmd, isStopped);
+  m_list.push_back(newJob);
+}
+
+void JobsList::printJobsList(){
+  removeFinishedJobs();
+  for(const auto& job : m_list)
+  {
+    std::cout << "[" << job.m_jobId << "] " << job.m_cmd << job.m_pid << std::endl;
+  }
+}
+
+void JobsList::removeFinishedJobs(){
+  if (m_list.empty())
+  {
+    m_jobIdCounter = 0;
+    return;
+  }
+  int maxActiveJobId = 0;
+  for (auto it = m_list.begin(); it != m_list.end(); ++it)
+  {
+    auto job = *it;
+    int exitStatus;
+    int waitResult = waitpid(job.m_pid, &exitStatus, WNOHANG);
+    if (waitResult == job.m_pid || waitResult == -1)
+    {
+      m_list.erase(it);
+      --it;
+    }
+    else if (job.m_jobId > maxActiveJobId)
+    {
+      maxActiveJobId = job.m_jobId;
+    }
+  }
+  m_jobIdCounter = maxActiveJobId;
+}
+
+
 //-----------------------------------------------BuiltInCommand-----------------------------------------------
 
 BuiltInCommand::BuiltInCommand(const char *cmd_line) : Command::Command(cmd_line) {}
@@ -296,7 +348,15 @@ void RedirectionCommand::execute() {
 }
 
 
+//-------------------------------------JobsCommand-------------------------------------
 
+JobsCommand::JobsCommand(const char* cmd_line) : BuiltInCommand(cmd_line) {}
+
+void JobsCommand::execute()
+{
+  SmallShell &smash = SmallShell::getInstance();
+  smash.getAllJobs()->printJobsList();
+}
 
 
 //-------------------------------------SmallShell-------------------------------------
@@ -373,12 +433,14 @@ Command *SmallShell::CreateCommand(const char *cmd_line) {
   else if (firstWord.compare("cd") == 0) {
     return new ChangeDirCommand(cmd_line, &m_prevDir);
   }
+  else if (firstWord.compare("jobs") == 0) {
+    return new JobsCommand(cmd_line);
+  }
     
 
 
     return nullptr;
 }
-
 
 void SmallShell::executeCommand(const char *cmd_line) {
     // TODO: Add your implementation here
@@ -401,8 +463,6 @@ void SmallShell::executeCommand(const char *cmd_line) {
     }
     delete cmd;
 }
-
-
 
 char *SmallShell::getCurrDir() const
 {
@@ -444,7 +504,10 @@ void SmallShell::setPrevDir()
   strcpy(m_prevDir, m_currDir);
 }
 
-
+JobsList *SmallShell::getAllJobs()
+{
+  return &jobs;
+}
 
 
 
