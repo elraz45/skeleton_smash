@@ -19,6 +19,9 @@ public:
     //virtual void prepare();
     //virtual void cleanup();
     // TODO: Add your extra methods if needed
+protected:
+    // command line
+    const char *m_cmd_line; 
 };
 
 class BuiltInCommand : public Command {
@@ -26,6 +29,7 @@ public:
     BuiltInCommand(const char *cmd_line);
 
     virtual ~BuiltInCommand() {
+        m_cmd_line = nullptr;
     }
 };
 
@@ -38,7 +42,6 @@ public:
 
     void execute() override;
 };
-
 
 class RedirectionCommand : public Command {
     // TODO: Add your data members
@@ -92,6 +95,7 @@ public:
 
     void execute() override;
 };
+
 
 class ChangeDirCommand : public BuiltInCommand {
     // TODO: Add your data members public:
@@ -244,9 +248,9 @@ class SmallShell {
 private:
     // TODO: Add your data members
     SmallShell();
+    std::string m_prompt;
 
 public:
-    Command *CreateCommand(const char *cmd_line);
 
     SmallShell(SmallShell const &) = delete; // disable copy ctor
     void operator=(SmallShell const &) = delete; // disable = operator
@@ -259,9 +263,30 @@ public:
 
     ~SmallShell();
 
+    Command *CreateCommand(const char *cmd_line);
+
     void executeCommand(const char *cmd_line);
 
-    // TODO: add extra methods as needed
+    std::string getPrompt() const;
+
+    void chngPrompt(const std::string& new_prompt = "smash");
 };
+
+
+
+
+
+
+class ChpromptCommand : public BuiltInCommand {
+    public:
+        ChpromptCommand(const char *cmd_line);
+
+        virtual ~ChpromptCommand() {
+        }
+
+        void execute() override;
+    };
+
+
 
 #endif //SMASH_COMMAND_H_
