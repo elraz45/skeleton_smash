@@ -111,7 +111,7 @@ class ChangeDirCommand : public BuiltInCommand {
     void execute() override;
 
     private:
-    char **m_plastPwd;
+    char **m_prevDirectory;
 };
 
 class GetCurrDirCommand : public BuiltInCommand {
@@ -310,7 +310,7 @@ public:
 
     void changePrompt(const std::string& new_prompt = "smash");
 
-    void setCurrDir(char *currDir, char *toCombine = nullptr);
+    void setCurrDir(const char *newDir);
 
     char *getCurrDir() const;
 

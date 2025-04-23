@@ -76,11 +76,10 @@ void _removeBackgroundSign(char *cmd_line) {
     cmd_line[str.find_last_not_of(WHITESPACE, idx) + 1] = 0;
 }
 
-// TODO: Add your implementation for classes in Commands.h 
 
+//-----------------------------------------------CommandUtils-----------------------------------------------
 
-//-----------------------------------------------Helper Functions-------------------------------------------------------
-char **extractArguments(const char *cmd_line, int *numArgs)
+char **extractArguments(const char *cmd_line, int *argc)
 {
   // Remove background sign if exists:
   char cmd[COMMAND_MAX_LENGTH];
@@ -98,7 +97,7 @@ char **extractArguments(const char *cmd_line, int *numArgs)
   }
   // Initialize args to avoid valgrind errors:
   std::fill_n(args, COMMAND_MAX_LENGTH + 1, nullptr);
-  *numArgs = _parseCommandLine(cmd_line_clean, args);
+  *argc = _parseCommandLine(cmd_line_clean, args);
   return args;
 }
 
@@ -113,35 +112,6 @@ void deleteArguments(char **args)
   free(args);
 }
 
-bool isFullPath(char *newPath)
-{
-  if (newPath[0] == '/')
-    return true;
-  return false;
-}
-
-char *goToParentDir(char *dir)
-{
-  if (!strcmp(dir, "/"))
-  {
-    return dir;
-  }
-  int stopIndex = string(dir).find_last_of("/");
-  dir[stopIndex] = '\0';
-  return dir;
-}
-
-bool isNumber(const char *str)
-{
-  for (int i = 0; str[i] != '\0'; i++)
-  {
-    if (!isdigit(str[i]))
-    {
-      return false;
-    }
-  }
-  return true;
-}
 //-----------------------------------------------Command-----------------------------------------------
 
 Command::Command(const char *cmd_line) : m_cmd_line(cmd_line) {}
@@ -174,6 +144,7 @@ void Command::initialCurrDir()
 
 
 //-----------------------------------------------Jobs-----------------------------------------------
+
 JobsList::JobEntry::JobEntry(int jobId, pid_t pid, const char *cmd, bool isStopped) :
   m_jobId(jobId),
   m_pid(pid),
@@ -256,9 +227,6 @@ void JobsList::removeJobById(int jobId){
 }
 
 
-
-
-
 //-----------------------------------------------BuiltInCommand-----------------------------------------------
 
 BuiltInCommand::BuiltInCommand(const char *cmd_line) : Command::Command(cmd_line) {}
@@ -269,10 +237,10 @@ BuiltInCommand::BuiltInCommand(const char *cmd_line) : Command::Command(cmd_line
 ChangePromptCommand::ChangePromptCommand(const char* cmd_line) : BuiltInCommand(cmd_line) {}
 
 void ChangePromptCommand::execute() {
-  int numArgs = 0;
-  char **args = extractArguments(this->m_cmd_line, &numArgs);
+  int argc = 0;
+  char **args = extractArguments(this->m_cmd_line, &argc);
   SmallShell &smash = SmallShell::getInstance();
-  if (numArgs == 1)
+  if (argc == 1)
   {
     smash.changePrompt();
   }
@@ -309,74 +277,65 @@ void GetCurrDirCommand::execute()
 
 //-------------------------------------ChangeDirCommand-------------------------------------
 
-ChangeDirCommand::ChangeDirCommand(const char *cmd_line, char **plastPwd) : BuiltInCommand(cmd_line),
-                                                                            m_plastPwd(plastPwd) {}
+ChangeDirCommand::ChangeDirCommand(const char *cmd_line, char **plastPwd) : BuiltInCommand(cmd_line), m_prevDirectory(plastPwd) {}
 
-void ChangeDirCommand::execute()
-{
-  SmallShell &smash = SmallShell::getInstance();
-  if (!strcmp(smash.getCurrDir(), ""))
-  {
-    initialCurrDir();
-  }
-  int numArgs = 0;
-  char **args = extractArguments(this->m_cmd_line, &numArgs);
-  if (numArgs > 2) 
-  {
-    cerr << "smash error: cd: too many arguments" << endl;
-    deleteArguments(args);
-    return;
-  }
-  else if (!strcmp(*m_plastPwd, "") && string(args[1]) == "-")
-  {
-    cerr << "smash error: cd: OLDPWD not set" << endl;
-    deleteArguments(args);
-    return;
-  }
-  else if (string(args[1]) == "-")
-  {
-    if (chdir(*m_plastPwd) == -1)
-    {
-      perror("smash error: chdir failed");
-      deleteArguments(args);
-      return;
+void ChangeDirCommand::execute() {
+    SmallShell &smash = SmallShell::getInstance();
+
+    // Initialize current directory if not set
+    if (!strcmp(smash.getCurrDir(), "")) {
+        initialCurrDir();
     }
-    // Switch between current and previous directories
-    char temp[PATH_MAX + 1];
-    strcpy(temp, smash.getPrevDir());
-    smash.setPrevDir();
-    smash.setCurrDir(temp);
-    deleteArguments(args);
-    return;
-  }
-  if (chdir(args[1]) == -1)
-  {
-    perror("smash error: chdir failed");
-    deleteArguments(args);
-    return;
-  }
-  // If the given "path" is to go up, remove the last part of the current path
-  if (string(args[1]) == "..")
-  {
-    smash.setPrevDir();
-    goToParentDir(smash.getCurrDir());
-    deleteArguments(args);
-    return;
-  }
 
-  // If the new path is the full path, set currDir equal to it
-  if (isFullPath(args[1]))
-  {
+    int argc = 0;
+    char **argv = extractArguments(this->m_cmd_line, &argc);
+
+    // Handle too many arguments
+    if (argc > 2) {
+        cerr << "smash error: cd: too many arguments" << endl;
+        deleteArguments(argv);
+        return;
+    }
+
+    // Handle "cd -" when OLDPWD is not set
+    if (argc == 2 && string(argv[1]) == "-" && !strcmp(*m_prevDirectory, "")) {
+        cerr << "smash error: cd: OLDPWD not set" << endl;
+        deleteArguments(argv);
+        return;
+    }
+
+    // Handle "cd -" to switch to the previous directory
+    if (argc == 2 && string(argv[1]) == "-") {
+        if (chdir(*m_prevDirectory) == -1) {
+            perror("smash error: chdir failed");
+            deleteArguments(argv);
+            return;
+        }
+        // Update directories
+        char temp[PATH_MAX + 1];
+        strcpy(temp, smash.getPrevDir());
+        smash.setPrevDir();
+        if (getcwd(smash.getCurrDir(), PATH_MAX) == nullptr) {
+            perror("smash error: getcwd failed");
+        }
+        deleteArguments(argv);
+        return;
+    }
+
+    // Change directory to the given path
+    if (chdir(argv[1]) == -1) {
+        perror("smash error: chdir failed");
+        deleteArguments(argv);
+        return;
+    }
+
+    // Update current and previous directories
     smash.setPrevDir();
-    smash.setCurrDir(args[1]);
-  }
-  // If not, append the new folder to the end of the current path
-  else
-  {
-    smash.setPrevDir();
-    smash.setCurrDir(smash.getCurrDir(), args[1]);
-  }
-  deleteArguments(args);
+    if (getcwd(smash.getCurrDir(), PATH_MAX) == nullptr) {
+        perror("smash error: getcwd failed");
+    }
+
+    deleteArguments(argv);
 }
 
 
@@ -404,42 +363,54 @@ void JobsCommand::execute()
 
 //-------------------------------------Foreground-------------------------------------
 
+bool isNumber(const char *str)
+{
+  for (int i = 0; str[i] != '\0'; i++)
+  {
+    if (!isdigit(str[i]))
+    {
+      return false;
+    }
+  }
+  return true;
+}
+
 ForegroundCommand::ForegroundCommand(const char* cmd_line, JobsList *jobs):
  BuiltInCommand(cmd_line), m_jobs(jobs) {}
 
 void ForegroundCommand::execute(){
-  int numArgs;
-  char **args = extractArguments(this->m_cmd_line, &numArgs);
+  int argc;
+  char **argv = extractArguments(this->m_cmd_line, &argc);
 
   int jobId;
 
-  if (numArgs > 2 || (numArgs > 1 && !isNumber(args[1])))
+  if (argc > 2 || (argc > 1 && !isNumber(argv[1])))
   {
     cerr << "smash error: fg: invalid arguments" << endl;
-    deleteArguments(args);
+    deleteArguments(argv);
     return;
   }
 
-  if (numArgs == 1)
+  if (argc == 1)
   {
     if (m_jobs->isEmpty())
     {
       cerr << "smash error: fg: jobs list is empty" << endl;
-      deleteArguments(args);
+      deleteArguments(argv);
       return;
     }
     jobId = m_jobs->getMaxId();
   }
   else
   {
-    jobId = stoi(args[1]);
+    jobId = stoi(argv[1]);
   }
 
   JobsList::JobEntry *job = m_jobs->getJobById(jobId);
   if (!job)
   {
     cerr << "smash error: fg: job-id " << jobId << " does not exist" << endl;
-    deleteArguments(args);
+    deleteArguments(argv);
     return;
   }
 
@@ -452,7 +423,7 @@ void ForegroundCommand::execute(){
       if (kill(jobPid, SIGCONT) == -1)
       {
         perror("smash error: kill failed");
-        deleteArguments(args);
+        deleteArguments(argv);
         return;
       }
     }
@@ -466,12 +437,12 @@ void ForegroundCommand::execute(){
     if (waitpid(jobPid, &exitStatus, WUNTRACED) == -1)
     {
       perror("smash error: waitpid failed");
-      deleteArguments(args);
+      deleteArguments(argv);
       return;
     }
     smash.m_foregroundPid = 0;
   }
-  deleteArguments(args);
+  deleteArguments(argv);
 }
 
 //-------------------------------------SmallShell-------------------------------------
@@ -515,23 +486,6 @@ void SmallShell::changePrompt(const std::string& new_prompt) {
 * Creates and returns a pointer to Command class which matches the given command line (cmd_line)
 */
 Command *SmallShell::CreateCommand(const char *cmd_line) {
-    // For example:
-  /*
-  string cmd_s = _trim(string(cmd_line));
-  string firstWord = cmd_s.substr(0, cmd_s.find_first_of(" \n"));
-
-  if (firstWord.compare("pwd") == 0) {
-    return new GetCurrDirCommand(cmd_line);
-  }
-  else if (firstWord.compare("showpid") == 0) {
-    return new ShowPidCommand(cmd_line);
-  }
-  else if ...
-  .....
-  else {
-    return new ExternalCommand(cmd_line);
-  }
-  */
 
   string cmd_s = _trim(string(cmd_line));
   string firstWord = cmd_s.substr(0, cmd_s.find_first_of(" \n"));
@@ -561,11 +515,6 @@ Command *SmallShell::CreateCommand(const char *cmd_line) {
 }
 
 void SmallShell::executeCommand(const char *cmd_line) {
-    // TODO: Add your implementation here
-    // for example:
-    // Command* cmd = CreateCommand(cmd_line);
-    // cmd->execute();
-    // Please note that you must fork smash process for some commands (e.g., external commands....)
 
     Command *cmd = CreateCommand(cmd_line);
     if (cmd == nullptr)
@@ -582,34 +531,13 @@ void SmallShell::executeCommand(const char *cmd_line) {
     delete cmd;
 }
 
-char *SmallShell::getCurrDir() const
-{
+char *SmallShell::getCurrDir() const {
   return m_currDir;
 }
 
-void SmallShell::setCurrDir(char *currDir, char *toCombine)
+void SmallShell::setCurrDir(const char *newDir)
 {
-  if (toCombine == nullptr)
-  {
-    strcpy(m_currDir, currDir);
-    return;
-  }
-  int length = string(currDir).length() + string(toCombine).length() + 2;
-  char *temp = (char *)malloc(length * sizeof(char));
-  if (temp == nullptr)
-  {
-    free(temp);
-    cerr << "smash error: malloc failed" << endl;
-    return;
-  }
-  strcpy(temp, currDir);
-  if (strcmp(currDir, "/") != 0)
-  {
-    strcat(temp, "/");
-  }
-  strcat(temp, toCombine);
-  strcpy(m_currDir, temp);
-  free(temp);
+  strcpy(m_currDir, newDir);
 }
 
 char *SmallShell::getPrevDir() const
