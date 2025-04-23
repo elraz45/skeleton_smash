@@ -7,6 +7,7 @@
 #include <iomanip>
 #include "Commands.h"
 #include <limits.h>
+#include <cstdlib>
 
 
 using namespace std;
@@ -119,11 +120,13 @@ void deleteArguments(char **args)
 
 //-----------------------------------------------Command-----------------------------------------------
 
-Command::Command(const char *cmd_line) : m_cmd_line(cmd_line) {}
+Command::Command(const char *cmd_line) {
+  m_cmd_line = strdup(cmd_line);
+}
 
 Command::~Command()
 {
-  m_cmd_line = nullptr;
+  free(m_cmd_line);
 }
 
 void Command::initialCurrDir()
@@ -510,6 +513,68 @@ void KillCommand::execute() {
   deleteArguments(args);
 }
 
+//-------------------------------------AliasCommand-------------------------------------
+
+AliasCommand::AliasCommand(const char* cmd_line) : BuiltInCommand(cmd_line) {}
+
+const std::regex AliasCommand::aliasPattern(R"(^alias [a-zA-Z0-9_]+='[^']*'$)");
+
+void AliasCommand::printAllAliases() {
+  SmallShell::getInstance().printAliases();
+}
+
+bool AliasCommand::checkAliasName(const std::string& aliasName) const {
+  // Returns true if alias name is valid (not reserved and not taken)
+  if (SmallShell::RESERVED_COMMANDS.count(aliasName)) {
+    return false;
+  }
+  return !SmallShell::getInstance().isAliasNameTaken(aliasName);
+}
+
+void AliasCommand::execute() {
+  int argc = 0;
+  char **args = extractArguments(this->m_cmd_line, &argc);
+
+  if (argc == 1) {
+    printAllAliases();
+    deleteArguments(args);
+    return;
+  }
+
+  if (!std::regex_match(this->m_cmd_line, aliasPattern)) {
+    cerr << "smash error: alias: invalid alias format" << endl;
+    deleteArguments(args);
+    return;
+  }
+
+  std::string input = _trim(std::string(this->m_cmd_line));
+  size_t alias_start = input.find(' ') + 1; // Skip "alias "
+  size_t equal_pos = input.find('=');
+  
+  // Extract alias name
+  std::string alias_name = input.substr(alias_start, equal_pos - alias_start);
+  
+  // Extract command (with quotes)
+  std::string commandWithQuotes = input.substr(equal_pos + 1);
+  
+  // Remove surrounding single quotes
+  std::string command = commandWithQuotes.substr(1, commandWithQuotes.length() - 2);
+
+  // Check if alias name is valid and not taken
+  if (!checkAliasName(alias_name)) {
+    cerr << "smash error: alias " << alias_name << " already exists or is a reserved command" << endl;
+    deleteArguments(args);
+    return;
+  }
+
+  // Add alias to the list in SmallShell
+  SmallShell::getInstance().addAlias(alias_name, command);
+  deleteArguments(args);
+  return;
+}
+
+
+
 
 
 //-------------------------------------RedirectionCommand-------------------------------------
@@ -519,7 +584,6 @@ void RedirectionCommand::execute() {
 }
 
 //-------------------------------------SmallShell-------------------------------------
-
 
 SmallShell::SmallShell(): m_prompt("smash") {
   m_prevDir = (char *)malloc((PATH_MAX + 1) * sizeof(char));
@@ -538,7 +602,6 @@ SmallShell::SmallShell(): m_prompt("smash") {
     return;
   }
   strcpy(m_currDir, "");
-
 }
 
 SmallShell::~SmallShell() {
@@ -546,6 +609,20 @@ SmallShell::~SmallShell() {
 }
 
 pid_t SmallShell::m_shellPid = getpid();
+
+const std::unordered_set<std::string> SmallShell::RESERVED_COMMANDS = {
+  "chprompt",
+  "showpid",
+  "pwd",
+  "cd",
+  "jobs",
+  "fg",
+  "kill",
+  "quit",
+  "alias",
+  "unalias",
+  "unsetenv",
+};
 
 std::string SmallShell::getPrompt() const
 {
@@ -559,37 +636,86 @@ void SmallShell::changePrompt(const std::string& new_prompt) {
 * Creates and returns a pointer to Command class which matches the given command line (cmd_line)
 */
 Command *SmallShell::CreateCommand(const char *cmd_line) {
-
   string cmd_s = _trim(string(cmd_line));
   string firstWord = cmd_s.substr(0, cmd_s.find_first_of(" \n"));
 
+  // Alias expansion
+  std::string expandedCommand;
+  if (getAliasCommand(firstWord, expandedCommand)) {
+    // We found an alias, so expand the command line
+    std::string rest = cmd_s.substr(firstWord.length());
+    std::string new_cmd_line = expandedCommand + rest;
+    cmd_s = _trim(new_cmd_line);
+    firstWord = cmd_s.substr(0, cmd_s.find_first_of(" \n"));
+    // Note: do not recursively expand aliases here to avoid infinite loops
+  }
+
   if (firstWord.compare("chprompt") == 0) {
-    return new ChangePromptCommand(cmd_line);
+    return new ChangePromptCommand(cmd_s.c_str());
   }
   else if (firstWord.compare("showpid") == 0) {
-    return new ShowPidCommand(cmd_line);
+    return new ShowPidCommand(cmd_s.c_str());
   }
   else if (firstWord.compare("pwd") == 0) {
-    return new GetCurrDirCommand(cmd_line);
+    return new GetCurrDirCommand(cmd_s.c_str());
   }
   else if (firstWord.compare("cd") == 0) {
-    return new ChangeDirCommand(cmd_line, &m_prevDir);
+    return new ChangeDirCommand(cmd_s.c_str(), &m_prevDir);
   }
   else if (firstWord.compare("jobs") == 0) {
-    return new JobsCommand(cmd_line);
+    return new JobsCommand(cmd_s.c_str());
   }
   else if (firstWord.compare("fg") == 0) {
-    return new ForegroundCommand(cmd_line, &jobs);
+    return new ForegroundCommand(cmd_s.c_str(), &jobs);
   }
   else if (firstWord.compare("quit") == 0) {
-    return new QuitCommand(cmd_line, &jobs);
+    return new QuitCommand(cmd_s.c_str(), &jobs);
   }
   else if (firstWord.compare("kill") == 0) {
-    return new KillCommand(cmd_line, &jobs);
+    return new KillCommand(cmd_s.c_str(), &jobs);
+  }
+  else if (firstWord.compare("alias") == 0) {
+    return new AliasCommand(cmd_s.c_str());
   }
 
+  return nullptr;
+}
+//-------------------------------------SmallShell Aliases Implementation-------------------------------------
 
-    return nullptr;
+void SmallShell::addAlias(const std::string& name, const std::string& command) {
+  // Overwrite if already exists
+  for (auto& p : m_aliases) {
+    if (p.first == name) {
+      p.second = command;
+      return;
+    }
+  }
+  m_aliases.push_back(std::make_pair(name, command));
+}
+
+bool SmallShell::getAliasCommand(const std::string& name, std::string& outCommand) const {
+  for (const auto& p : m_aliases) {
+    if (p.first == name) {
+      outCommand = p.second;
+      return true;
+    }
+  }
+  return false;
+}
+
+void SmallShell::printAliases() const {
+  for (const auto& p : m_aliases) {
+    std::cout << p.first << "='" << p.second << "'" << std::endl;
+  }
+}
+
+bool SmallShell::isAliasNameTaken(const std::string& name) const {
+  for (const auto& p : m_aliases) {
+    if (p.first == name) {
+      return true;
+    }
+  }
+  return false;
 }
 
 void SmallShell::executeCommand(const char *cmd_line) {

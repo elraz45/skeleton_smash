@@ -3,6 +3,10 @@
 #define SMASH_COMMAND_H_
 
 #include <vector>
+#include <unordered_set>
+#include <string.h>
+#include <regex>
+
 
 #define COMMAND_MAX_LENGTH (200)
 #define COMMAND_MAX_ARGS (20)
@@ -22,7 +26,7 @@ public:
     // TODO: Add your extra methods if needed
 protected:
     // command line
-    const char *m_cmd_line; 
+    char *m_cmd_line;
 
     void initialCurrDir();
 };
@@ -236,7 +240,13 @@ public:
 };
 
 class AliasCommand : public BuiltInCommand {
+private:
+    bool checkAliasName(const std::string& aliasName) const;
+    void printAllAliases();
+
 public:
+    static const std::regex aliasPattern;
+
     AliasCommand(const char *cmd_line);
 
     virtual ~AliasCommand() {
@@ -283,11 +293,17 @@ private:
     char *m_currDir;
     char *m_prevDir;
     JobsList jobs;
-
-
 public:
     static pid_t m_shellPid;
     int m_foregroundPid;
+    static const std::unordered_set<std::string> RESERVED_COMMANDS;
+
+    // Aliases
+    std::vector<std::pair<std::string, std::string>> m_aliases;
+    void addAlias(const std::string& name, const std::string& command);
+    bool getAliasCommand(const std::string& name, std::string& outCommand) const;
+    void printAliases() const;
+    bool isAliasNameTaken(const std::string& name) const;
 
     SmallShell(SmallShell const &) = delete; // disable copy ctor
     void operator=(SmallShell const &) = delete; // disable = operator
