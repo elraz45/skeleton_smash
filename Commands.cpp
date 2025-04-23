@@ -576,7 +576,30 @@ void AliasCommand::execute() {
 }
 
 
+//-------------------------------------UnAliasCommand-------------------------------------
+UnAliasCommand::UnAliasCommand(const char* cmd_line) : BuiltInCommand(cmd_line) {}
 
+void UnAliasCommand::execute() {
+  int argc = 0;
+  char **args = extractArguments(this->m_cmd_line, &argc);
+  SmallShell &smash = SmallShell::getInstance();
+  
+  if (argc == 1) {
+    cerr << "smash error: unalias: not enough arguments" << endl;
+    deleteArguments(args);
+    return;
+  }
+
+  for (int i = 1; i < argc; ++i) {
+    if (!smash.isAliasNameTaken(args[i])) {
+      cerr << "smash error: unalias: " << args[i] << " alias does not exist" << endl;
+      deleteArguments(args);
+      return;
+    }
+    smash.removeAlias(args[i]);
+  }
+  deleteArguments(args);
+}
 
 
 //-------------------------------------RedirectionCommand-------------------------------------
@@ -678,6 +701,18 @@ Command *SmallShell::CreateCommand(const char *cmd_line) {
   else if (firstWord.compare("alias") == 0) {
     return new AliasCommand(cmd_s.c_str());
   }
+  else if (firstWord.compare("unalias") == 0) {
+    return new UnAliasCommand(cmd_s.c_str());
+  }
+  /*
+    else if (firstWord.compare("unsetenv") == 0) {
+    return new UnSetEnvCommand(cmd_s.c_str());
+  }
+  else if (firstWord.compare("watchproc") == 0) {
+    return new WatchProcCommand(cmd_s.c_str());
+  }
+  */
+
 
   return nullptr;
 }
@@ -762,4 +797,13 @@ bool SmallShell::isAliasNameTaken(const std::string& name) const {
     }
   }
   return false;
+}
+
+void SmallShell::removeAlias(const std::string& name) {
+  for (auto it = m_aliases.begin(); it != m_aliases.end(); ++it) {
+    if (it->first == name) {
+      m_aliases.erase(it);
+      return;
+    }
+  }
 }

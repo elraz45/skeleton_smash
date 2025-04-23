@@ -304,7 +304,8 @@ public:
     bool getAliasCommand(const std::string& name, std::string& outCommand) const;
     void printAliases() const;
     bool isAliasNameTaken(const std::string& name) const;
-
+    void removeAlias(const std::string& name);
+    
     SmallShell(SmallShell const &) = delete; // disable copy ctor
     void operator=(SmallShell const &) = delete; // disable = operator
     static SmallShell &getInstance() // make SmallShell singleton
