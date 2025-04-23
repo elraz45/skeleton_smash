@@ -145,7 +145,9 @@ public:
 };
 
 class QuitCommand : public BuiltInCommand {
-    // TODO: Add your data members public:
+private:
+    JobsList *m_jobs;
+public:
     QuitCommand(const char *cmd_line, JobsList *jobs);
 
     virtual ~QuitCommand() {
@@ -154,6 +156,16 @@ class QuitCommand : public BuiltInCommand {
     void execute() override;
 };
 
+class KillCommand : public BuiltInCommand {
+    // TODO: Add your data members
+public:
+    KillCommand(const char *cmd_line, JobsList *jobs);
+
+    virtual ~KillCommand() {
+    }
+
+    void execute() override;
+};
 
 class JobsList {
 public:
@@ -205,21 +217,6 @@ public:
     JobsCommand(const char *cmd_line);
 
     virtual ~JobsCommand() {
-    }
-
-    void execute() override;
-};
-
-
-
-
-
-class KillCommand : public BuiltInCommand {
-    // TODO: Add your data members
-public:
-    KillCommand(const char *cmd_line, JobsList *jobs);
-
-    virtual ~KillCommand() {
     }
 
     void execute() override;

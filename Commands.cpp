@@ -359,17 +359,6 @@ void ChangeDirCommand::execute() {
 
 
 
-
-
-void QuitCommand::execute() {
-  // TODO: Add implementation
-}
-
-void RedirectionCommand::execute() {
-  // TODO: Add implementation
-}
-
-
 //-------------------------------------JobsCommand-------------------------------------
 
 JobsCommand::JobsCommand(const char* cmd_line) : BuiltInCommand(cmd_line) {}
@@ -395,7 +384,9 @@ bool isNumber(const char *str)
 }
 
 ForegroundCommand::ForegroundCommand(const char* cmd_line, JobsList *jobs):
- BuiltInCommand(cmd_line), m_jobs(jobs) {}
+  BuiltInCommand(cmd_line) {
+      m_jobs = jobs; // Initialize m_jobs in the constructor
+  }
 
 void ForegroundCommand::execute(){
   int argc;
@@ -464,6 +455,33 @@ void ForegroundCommand::execute(){
   deleteArguments(argv);
 }
 
+//-------------------------------------QuitCommand-------------------------------------
+
+QuitCommand::QuitCommand(const char* cmd_line, JobsList *jobs):
+ BuiltInCommand(cmd_line), m_jobs(jobs) {}
+
+
+ void QuitCommand::execute() {
+  int argc = 0;
+  char **args = extractArguments(this->m_cmd_line, &argc);  
+
+  if (argc > 1 && strcmp(args[1], "kill") == 0) {
+    m_jobs->killAllJobs();
+  }
+
+  deleteArguments(args);
+  exit(0);
+}
+
+
+
+
+
+
+void RedirectionCommand::execute() {
+  // TODO: Add implementation
+}
+
 //-------------------------------------SmallShell-------------------------------------
 
 
@@ -526,6 +544,9 @@ Command *SmallShell::CreateCommand(const char *cmd_line) {
   }
   else if (firstWord.compare("fg") == 0) {
     return new ForegroundCommand(cmd_line, &jobs);
+  }
+  else if (firstWord.compare("quit") == 0) {
+    return new QuitCommand(cmd_line, &jobs);
   }
     
 
