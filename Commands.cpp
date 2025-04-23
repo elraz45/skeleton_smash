@@ -460,7 +460,6 @@ void ForegroundCommand::execute(){
 QuitCommand::QuitCommand(const char* cmd_line, JobsList *jobs):
  BuiltInCommand(cmd_line), m_jobs(jobs) {}
 
-
  void QuitCommand::execute() {
   int argc = 0;
   char **args = extractArguments(this->m_cmd_line, &argc);  
@@ -474,9 +473,46 @@ QuitCommand::QuitCommand(const char* cmd_line, JobsList *jobs):
 }
 
 
+//-------------------------------------KillCommand-------------------------------------
+
+KillCommand::KillCommand(const char* cmd_line, JobsList *jobs):
+ BuiltInCommand(cmd_line), m_jobs(jobs) {}
+
+void KillCommand::execute() {
+  int argc = 0;
+  char **args = extractArguments(this->m_cmd_line, &argc);
+
+  // Support signal with - prefix
+  if (argc != 3 || args[1][0] != '-' || !isNumber(args[1] + 1) || !isNumber(args[2])) {
+    cerr << "smash error: kill: invalid arguments" << endl;
+    deleteArguments(args);
+    return;
+  }
+
+  int signalNum = stoi(args[1] + 1);  // Skip the '-' character
+  int jobId = stoi(args[2]);
+
+  JobsList::JobEntry *job = m_jobs->getJobById(jobId);
+  if (!job) {
+    cerr << "smash error: kill: job-id " << jobId << " does not exist" << endl;
+    deleteArguments(args);
+    return;
+  }
+
+  if (kill(job->m_pid, signalNum) == -1) {
+    perror("smash error: kill failed");
+    deleteArguments(args);
+    return;
+  }
+
+  cout << "signal number " << signalNum << " was sent to pid " << job->m_pid << endl;
+
+  deleteArguments(args);
+}
 
 
 
+//-------------------------------------RedirectionCommand-------------------------------------
 
 void RedirectionCommand::execute() {
   // TODO: Add implementation
@@ -548,7 +584,9 @@ Command *SmallShell::CreateCommand(const char *cmd_line) {
   else if (firstWord.compare("quit") == 0) {
     return new QuitCommand(cmd_line, &jobs);
   }
-    
+  else if (firstWord.compare("kill") == 0) {
+    return new KillCommand(cmd_line, &jobs);
+  }
 
 
     return nullptr;
