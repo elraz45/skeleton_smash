@@ -1,2 +1,9 @@
+# Ignore object files and executables created by compilation
 *.o
 smash
+
+# Ignore test output files generated during testing
+test_output*.txt
+
+# Ignore local VS Code workspace settings and metadata
+.vscode/
