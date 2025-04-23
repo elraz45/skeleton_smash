@@ -7,7 +7,6 @@
 #include <iomanip>
 #include "Commands.h"
 #include <limits.h>
-#include <cstdlib>
 
 
 using namespace std;
@@ -601,6 +600,44 @@ void UnAliasCommand::execute() {
   deleteArguments(args);
 }
 
+//-------------------------------------UnSetEnvCommand-------------------------------------
+UnSetEnvCommand::UnSetEnvCommand(const char* cmd_line) : BuiltInCommand(cmd_line) {}
+
+extern char **environ;
+
+void UnSetEnvCommand::execute() {
+    int argc = 0;
+    char **args = extractArguments(this->m_cmd_line, &argc);
+
+    if (argc == 1) {
+        cerr << "smash error: unsetenv: not enough arguments" << endl;
+        deleteArguments(args);
+        return;
+    }
+
+    for (int i = 1; i < argc; ++i) {
+        const char* var_name = args[i];
+        size_t name_len = strlen(var_name);
+
+        bool found = false;
+        for (int j = 0; environ[j]; ++j) {
+            if (strncmp(environ[j], var_name, name_len) == 0 && environ[j][name_len] == '=') {
+                // Shift the remaining pointers left
+                for (; environ[j]; ++j) {
+                    environ[j] = environ[j + 1];
+                }
+                found = true;
+                break;
+            }
+        }
+
+        if (!found) {
+            cerr << "smash error: unsetenv: " << var_name << " does not exist" << endl;
+        }
+    }
+
+    deleteArguments(args);
+}
 
 //-------------------------------------RedirectionCommand-------------------------------------
 
@@ -704,10 +741,10 @@ Command *SmallShell::CreateCommand(const char *cmd_line) {
   else if (firstWord.compare("unalias") == 0) {
     return new UnAliasCommand(cmd_s.c_str());
   }
-  /*
-    else if (firstWord.compare("unsetenv") == 0) {
+  else if (firstWord.compare("unsetenv") == 0) {
     return new UnSetEnvCommand(cmd_s.c_str());
   }
+  /*
   else if (firstWord.compare("watchproc") == 0) {
     return new WatchProcCommand(cmd_s.c_str());
   }
