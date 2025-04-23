@@ -155,7 +155,7 @@ JobsList::JobEntry::JobEntry(int jobId, pid_t pid, const char *cmd, bool isStopp
   m_pid(pid),
   m_isStopped(isStopped)
 {
-  strcpy(m_cmd, cmd);
+  strcpy(m_commandLine, cmd);
 }
 
 void JobsList::addJob(const char *cmd, pid_t pid, bool isStopped)
@@ -171,7 +171,7 @@ void JobsList::printJobsList(){
   removeFinishedJobs();
   for(const auto& job : m_list)
   {
-    std::cout << "[" << job.m_jobId << "] " << job.m_cmd << job.m_pid << std::endl;
+    std::cout << "[" << job.m_jobId << "] " << job.m_commandLine << job.m_pid << std::endl;
   }
 }
 
@@ -231,6 +231,20 @@ void JobsList::removeJobById(int jobId){
   }
 }
 
+void JobsList::killAllJobs(){
+  removeFinishedJobs();
+  cout << "sending SIGKILL signal to " << m_list.size() <<" jobs:" << endl;
+
+  for (auto it = m_list.begin(); it != m_list.end(); ++it)
+  {
+    auto job = *it;
+    cout << job.m_jobId << ": " << job.m_commandLine << endl;
+    if (kill(job.m_pid, SIGKILL) == -1)
+    {
+      perror("smash error: kill failed");
+    }
+  }
+}
 
 //-----------------------------------------------BuiltInCommand-----------------------------------------------
 
@@ -435,7 +449,7 @@ void ForegroundCommand::execute(){
 
     int exitStatus;
     
-    cout << job->m_cmd << " " << jobPid << endl;
+    cout << job->m_commandLine << " " << jobPid << endl;
 
     smash.m_foregroundPid = jobPid;
     m_jobs->removeJobById(jobId);

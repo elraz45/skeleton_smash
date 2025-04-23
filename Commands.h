@@ -163,7 +163,7 @@ public:
         ~JobEntry(){}
         int m_jobId;
         pid_t m_pid;
-        char m_cmd[COMMAND_MAX_LENGTH + 1];
+        char m_commandLine[COMMAND_MAX_LENGTH + 1];
         bool m_isStopped;
     };
 
