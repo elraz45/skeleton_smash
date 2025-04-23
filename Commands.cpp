@@ -121,11 +121,13 @@ void deleteArguments(char **args)
 //-----------------------------------------------Command-----------------------------------------------
 
 Command::Command(const char *cmd_line) {
-  m_cmd_line = strdup(cmd_line);
+  m_cmd_line = (char*)malloc(strlen(cmd_line) + 1);
+  if (m_cmd_line != nullptr) {
+    strcpy(m_cmd_line, cmd_line);
+  }
 }
 
-Command::~Command()
-{
+Command::~Command() {
   free(m_cmd_line);
 }
 
@@ -647,7 +649,6 @@ Command *SmallShell::CreateCommand(const char *cmd_line) {
     std::string new_cmd_line = expandedCommand + rest;
     cmd_s = _trim(new_cmd_line);
     firstWord = cmd_s.substr(0, cmd_s.find_first_of(" \n"));
-    // Note: do not recursively expand aliases here to avoid infinite loops
   }
 
   if (firstWord.compare("chprompt") == 0) {
@@ -680,6 +681,51 @@ Command *SmallShell::CreateCommand(const char *cmd_line) {
 
   return nullptr;
 }
+
+void SmallShell::executeCommand(const char *cmd_line) {
+
+  Command *cmd = CreateCommand(cmd_line);
+  if (cmd == nullptr)
+  {
+    delete cmd;
+    return;
+  }
+  cmd->execute();
+  if (dynamic_cast<QuitCommand*>(cmd) != nullptr || dynamic_cast<RedirectionCommand *>(cmd) != nullptr)
+  {
+    delete cmd;
+    exit(0);
+  }
+  delete cmd;
+}
+
+char *SmallShell::getCurrDir() const {
+return m_currDir;
+}
+
+void SmallShell::setCurrDir(const char *newDir)
+{
+strcpy(m_currDir, newDir);
+}
+
+char *SmallShell::getPrevDir() const
+{
+return m_prevDir;
+}
+
+void SmallShell::setPrevDir()
+{
+strcpy(m_prevDir, m_currDir);
+}
+
+JobsList *SmallShell::getAllJobs()
+{
+return &jobs;
+}
+
+
+
+
 //-------------------------------------SmallShell Aliases Implementation-------------------------------------
 
 void SmallShell::addAlias(const std::string& name, const std::string& command) {
@@ -717,47 +763,3 @@ bool SmallShell::isAliasNameTaken(const std::string& name) const {
   }
   return false;
 }
-
-void SmallShell::executeCommand(const char *cmd_line) {
-
-    Command *cmd = CreateCommand(cmd_line);
-    if (cmd == nullptr)
-    {
-      delete cmd;
-      return;
-    }
-    cmd->execute();
-    if (dynamic_cast<QuitCommand*>(cmd) != nullptr || dynamic_cast<RedirectionCommand *>(cmd) != nullptr)
-    {
-      delete cmd;
-      exit(0);
-    }
-    delete cmd;
-}
-
-char *SmallShell::getCurrDir() const {
-  return m_currDir;
-}
-
-void SmallShell::setCurrDir(const char *newDir)
-{
-  strcpy(m_currDir, newDir);
-}
-
-char *SmallShell::getPrevDir() const
-{
-  return m_prevDir;
-}
-
-void SmallShell::setPrevDir()
-{
-  strcpy(m_prevDir, m_currDir);
-}
-
-JobsList *SmallShell::getAllJobs()
-{
-  return &jobs;
-}
-
-
-
