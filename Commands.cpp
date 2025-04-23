@@ -79,26 +79,31 @@ void _removeBackgroundSign(char *cmd_line) {
 
 //-----------------------------------------------CommandUtils-----------------------------------------------
 
-char **extractArguments(const char *cmd_line, int *argc)
-{
-  // Remove background sign if exists:
-  char cmd[COMMAND_MAX_LENGTH];
-  strcpy(cmd, cmd_line);
-  _removeBackgroundSign(cmd);
-  const char *cmd_line_clean = cmd;
+char **extractArguments(const char *cmd_line, int *argc) {
+    // Create a copy of the command line to safely modify it
+    char cmd[COMMAND_MAX_LENGTH];
+    strncpy(cmd, cmd_line, COMMAND_MAX_LENGTH);
+    cmd[COMMAND_MAX_LENGTH - 1] = '\0'; // Ensure null termination
 
-  // Parse arguments:
-  char **args = (char **)malloc((COMMAND_MAX_LENGTH + 1) * sizeof(char *));
-  if (args == nullptr)
-  {
-    cerr << "smash error: malloc failed" << endl;
-    free(args);
-    return nullptr;
-  }
-  // Initialize args to avoid valgrind errors:
-  std::fill_n(args, COMMAND_MAX_LENGTH + 1, nullptr);
-  *argc = _parseCommandLine(cmd_line_clean, args);
-  return args;
+    // Remove the background sign if it exists
+    _removeBackgroundSign(cmd);
+
+    // Allocate memory for the arguments array
+    char **args = (char **)malloc((COMMAND_MAX_ARGS + 1) * sizeof(char*));
+    if (!args) {
+        cerr << "smash error: malloc failed" << endl;
+        return nullptr;
+    }
+
+    // Initialize the arguments array to avoid undefined behavior
+    for (int i = 0; i < COMMAND_MAX_ARGS + 1; i++) {
+        args[i] = nullptr;
+    }
+
+    // Parse the command line into arguments
+    *argc = _parseCommandLine(cmd, args);
+
+    return args;
 }
 
 void deleteArguments(char **args)
