@@ -181,7 +181,7 @@ void JobsList::printJobsList(){
   removeFinishedJobs();
   for(const auto& job : m_list)
   {
-    std::cout << "[" << job.m_jobId << "] " << job.m_commandLine << job.m_pid << std::endl;
+    std::cout << "[" << job.m_jobId << "] " << job.m_commandLine << std::endl;
   }
 }
 
