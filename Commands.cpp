@@ -7,12 +7,13 @@
 #include <iomanip>
 #include "Commands.h"
 #include <limits.h>
-#include <fcntl.h> 
-#include <fstream>  
-#include <sstream>  
-#include <stdexcept> 
-#include <string> 
+#include <fcntl.h>
+#include <fstream>
+#include <sstream>
+#include <stdexcept>
+#include <string>
 #include <iterator>
+
 
 using namespace std;
 
@@ -242,7 +243,7 @@ void JobsList::removeJobById(int jobId){
 
 void JobsList::killAllJobs(){
   removeFinishedJobs();
-  cout << "sending SIGKILL signal to " << m_list.size() <<" jobs:" << endl;
+  cout << "smash: sending SIGKILL signal to " << m_list.size() <<" jobs:" << endl;
 
   for (auto it = m_list.begin(); it != m_list.end(); ++it)
   {
@@ -766,12 +767,10 @@ void ExternalCommand::execute()
 
 RedirectionCommand::RedirectionCommand(const char *cmd_line) : Command(cmd_line) {}
 
-void RedirectionCommand::execute()
-{
-    int numArgs = 0;
-    char **args = extractArguments(this->m_cmd_line, &numArgs);
+void RedirectionCommand::execute() {
     SmallShell &smash = SmallShell::getInstance();
 
+    // Copy the command line to safely modify it
     char cmd[COMMAND_MAX_LENGTH + 1];
     strcpy(cmd, this->m_cmd_line);
 
@@ -779,8 +778,7 @@ void RedirectionCommand::execute()
     char *overwrite = strstr(cmd, ">");
     char *append = strstr(cmd, ">>");
 
-    if (overwrite != nullptr || append != nullptr)
-    {
+    if (overwrite != nullptr || append != nullptr) {
         // Determine the type of redirection
         bool isAppend = (append != nullptr);
         char *redirectOperator = isAppend ? append : overwrite;
@@ -788,114 +786,122 @@ void RedirectionCommand::execute()
         // Split the command and file path
         *redirectOperator = '\0'; // Terminate the command before the operator
         redirectOperator += isAppend ? 2 : 1; // Move past the operator
-        std::string trimmedFilePath = _trim(string(redirectOperator));
+        std::string trimmedFilePath = _trim(std::string(redirectOperator));
         const char *filePath = trimmedFilePath.c_str();
 
-        // Redirect output
-        int fd = open(filePath, O_WRONLY | O_CREAT | (isAppend ? O_APPEND : O_TRUNC), 0666);
-        if (fd == -1)
-        {
-            perror("smash error: open failed");
-            deleteArguments(args);
+        // Save the original STDOUT
+        int originalStdout = dup(STDOUT_FILENO);
+        if (originalStdout == -1) {
+            perror("smash error: dup failed");
             return;
         }
 
-        if (dup2(fd, STDOUT_FILENO) == -1)
-        {
+        // Redirect output to the specified file
+        int fd = open(filePath, O_WRONLY | O_CREAT | (isAppend ? O_APPEND : O_TRUNC), 0666);
+        if (fd == -1) {
+            perror("smash error: open failed");
+            return;
+        }
+
+        if (dup2(fd, STDOUT_FILENO) == -1) {
             perror("smash error: dup2 failed");
             close(fd);
-            deleteArguments(args);
             return;
         }
 
         close(fd);
+
+        // Execute the command
+        smash.executeCommand(_trim(std::string(cmd)).c_str());
+
+        // Restore the original STDOUT
+        if (dup2(originalStdout, STDOUT_FILENO) == -1) {
+            perror("smash error: dup2 restore failed");
+        }
+        close(originalStdout);
     }
-
-    // Execute the command
-    smash.executeCommand(cmd);
-
-    // Clean up
-    deleteArguments(args);
 }
 
 //--------------------------------------------------------Pipe----------------------------------------------------------
 
 PipeCommand::PipeCommand(const char *cmd_line) : Command(cmd_line) {}
 
-void PipeCommand::execute()
-{
-  string str1 = string(this->m_cmd_line);
-  int pipeIndex = str1.find('|');
-  int isAmpersand = 0;
-  if (str1.find('&') != string::npos)
-  {
-    isAmpersand = 1;
-  }
-  string first = str1.substr(0, pipeIndex + isAmpersand);
-  string sec = str1.substr(pipeIndex + isAmpersand + 1);
-  int numArgs1;
-  char **args1 = extractArguments(first.c_str(), &numArgs1);
-  int numArgs2;
-  char **args2 = extractArguments(sec.c_str(), &numArgs2);
-  int my_pipe[2];
-  pipe(my_pipe);
-  if (fork() == 0) // Child
-  {
-    if (setpgrp() == -1)
-    {
-      perror("smash error: setpgrp failed");
-      return;
+void PipeCommand::execute() {
+    string str1 = string(this->m_cmd_line);
+    int pipeIndex = str1.find('|');
+    string first = str1.substr(0, pipeIndex);
+    string sec = str1.substr(pipeIndex + 1);
+
+    int my_pipe[2];
+    if (pipe(my_pipe) == -1) {
+        perror("smash error: pipe failed");
+        return;
     }
-    if (!isAmpersand)
-    {
-      if (dup2(my_pipe[1], STDOUT_FILENO) == -1)
-      {
-        deleteArguments(args1);
-        deleteArguments(args2);
-        perror("smash error: dup2 failed");
-        exit(0);
-      }
+
+    pid_t pid1 = fork();
+    if (pid1 == 0) { // First child process
+        if (setpgrp() == -1) {
+            perror("smash error: setpgrp failed");
+            exit(1);
+        }
+        if (dup2(my_pipe[1], STDOUT_FILENO) == -1) {
+            perror("smash error: dup2 failed");
+            exit(1);
+        }
+        close(my_pipe[0]);
+        close(my_pipe[1]);
+
+        char *args1[COMMAND_MAX_ARGS];
+        _parseCommandLine(first.c_str(), args1); // Parse arguments
+        if (execvp(args1[0], args1) == -1) {
+            perror("smash error: execvp failed");
+            exit(1);
+        }
     }
-    else
-    {
-      if (dup2(my_pipe[1], 2) == -1)
-      {
-        deleteArguments(args1);
-        deleteArguments(args2);
-        perror("smash error: dup2 failed");
-        exit(0);
-      }
+
+    pid_t pid2 = fork();
+    if (pid2 == 0) { // Second child process
+        if (setpgrp() == -1) {
+            perror("smash error: setpgrp failed");
+            exit(1);
+        }
+        if (dup2(my_pipe[0], STDIN_FILENO) == -1) {
+            perror("smash error: dup2 failed");
+            exit(1);
+        }
+        close(my_pipe[0]);
+        close(my_pipe[1]);
+
+        char *args2[COMMAND_MAX_ARGS];
+        _parseCommandLine(sec.c_str(), args2); // Parse arguments
+        if (execvp(args2[0], args2) == -1) {
+            perror("smash error: execvp failed");
+            exit(1);
+        }
     }
+
+    // Parent process
     close(my_pipe[0]);
     close(my_pipe[1]);
-    string command = string(args1[0]);
-    if (execvp(command.c_str(), args1) == -1)
-    {
-      perror("smash error: evecvp failed");
-      deleteArguments(args1);
-      deleteArguments(args2);
-      exit(0);
+
+    int status;
+    if (waitpid(pid1, &status, 0) == -1) {
+        perror("smash error: waitpid failed");
     }
-  }
-  else
-  {
-    if (dup2(my_pipe[0], STDIN_FILENO) == -1)
-    {
-      perror("smash error: dup2 failed");
-      exit(0);
+    if (waitpid(pid2, &status, 0) == -1) {
+        perror("smash error: waitpid failed");
     }
-    close(my_pipe[0]);
-    close(my_pipe[1]);
-    string command = string(args2[0]);
-    if (execvp(command.c_str(), args2) == -1)
-    {
-      perror("smash error: evecvp failed");
-      deleteArguments(args1);
-      deleteArguments(args2);
-      exit(0);
-    }
-  }
 }
+
+
+
+//-------------------------------------DuCommand-------------------------------------
+
+
+//-------------------------------------WhoAmICommand-------------------------------------
+
+
+//-------------------------------------NetInfoCommand-------------------------------------
 
 
 //-------------------------------------SmallShell-------------------------------------
@@ -1038,6 +1044,14 @@ Command *SmallShell::CreateCommand(const char *cmd_line)
     {
         return new WatchProcCommand(cmd_s.c_str());
     }
+    //else if (firstWord == "du")
+    //{
+    //    return new DuCommand(cmd_s.c_str());
+    //}
+    //else if (firstWord == "whoami")
+    //    return new WhoAmICommand(cmd_s.c_str());
+    //else if (firstWord == "netinfo")
+    //    return new NetInfoCommand(cmd_s.c_str());
     else
     {
         // Handle external commands
@@ -1090,7 +1104,7 @@ void SmallShell::executeCommand(const char *cmd_line) {
     return;
   }
   cmd->execute();
-  if (dynamic_cast<QuitCommand*>(cmd) != nullptr || dynamic_cast<RedirectionCommand *>(cmd) != nullptr)
+  if (dynamic_cast<QuitCommand*>(cmd) != nullptr)
   {
     delete cmd;
     exit(0);
