@@ -18,5 +18,4 @@ void ctrlCHandler(int sig_num) {
         cout << "smash: process " << shell.m_foregroundPid << " was killed" << endl;
     }
     shell.m_foregroundPid = 0;
-
 }

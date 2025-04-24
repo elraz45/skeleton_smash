@@ -837,10 +837,17 @@ void RedirectionCommand::execute() {
 PipeCommand::PipeCommand(const char *cmd_line) : Command(cmd_line) {}
 
 void PipeCommand::execute() {
-    string str1 = string(this->m_cmd_line);
-    int pipeIndex = str1.find('|');
-    string first = str1.substr(0, pipeIndex);
-    string sec = str1.substr(pipeIndex + 1);
+    // Enhanced parsing for | and |& pipe types
+    string fullCmd = this->m_cmd_line;
+    bool stderrPipe = false;
+    size_t pipeIndex = fullCmd.find("|&");
+    if (pipeIndex != string::npos) {
+        stderrPipe = true;
+    } else {
+        pipeIndex = fullCmd.find('|');
+    }
+    string first = fullCmd.substr(0, pipeIndex);
+    string sec   = fullCmd.substr(pipeIndex + (stderrPipe ? 2 : 1));
 
     int my_pipe[2];
     if (pipe(my_pipe) == -1) {
@@ -854,7 +861,7 @@ void PipeCommand::execute() {
             perror("smash error: setpgrp failed");
             exit(1);
         }
-        if (dup2(my_pipe[1], STDOUT_FILENO) == -1) {
+        if (dup2(my_pipe[1], stderrPipe ? STDERR_FILENO : STDOUT_FILENO) == -1) {
             perror("smash error: dup2 failed");
             exit(1);
         }
