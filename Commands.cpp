@@ -10,11 +10,14 @@
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <dirent.h>
-#include <fstream>
-#include <sstream>
 #include <stdexcept>
 #include <string>
+
 #include <iterator>
+#include <sys/socket.h>
+#include <sys/ioctl.h>
+#include <net/if.h>
+#include <arpa/inet.h>
 
 
 using namespace std;
@@ -650,11 +653,20 @@ void UnSetEnvCommand::execute() {
 WatchProcCommand::WatchProcCommand(const char* cmd_line) : BuiltInCommand(cmd_line) {}
 
 std::string WatchProcCommand::readProcFile(pid_t pid, const std::string& fileName) {
-  std::ifstream infile("/proc/" + std::to_string(pid) + "/" + fileName);
-  if (!infile) {
-    throw std::runtime_error("cannot open");
+  std::string path = "/proc/" + std::to_string(pid) + "/" + fileName;
+  int fd = open(path.c_str(), O_RDONLY);
+  if (fd == -1) {
+      throw std::runtime_error("cannot open");
   }
-  return std::string((std::istreambuf_iterator<char>(infile)), std::istreambuf_iterator<char>());
+  const size_t BUF_SIZE = 1024;
+  std::string content;
+  char buffer[BUF_SIZE];
+  ssize_t bytesRead;
+  while ((bytesRead = read(fd, buffer, BUF_SIZE)) > 0) {
+      content.append(buffer, bytesRead);
+  }
+  close(fd);
+  return content;
 }
 
 double WatchProcCommand::parseMemoryMb(const std::string& statusContent) {
@@ -683,13 +695,20 @@ double WatchProcCommand::parseCpuPercent(const std::string& statContent) {
     long stime      = std::stol(fields[14]);
     long starttime  = std::stol(fields[21]);
     long clkTck     = sysconf(_SC_CLK_TCK);
-    // Read system uptime
-    std::ifstream uptimeFile("/proc/uptime");
-    if (!uptimeFile) {
+    // Read system uptime via syscall
+    int fd_uptime = open("/proc/uptime", O_RDONLY);
+    if (fd_uptime == -1) {
         return 0.0;
     }
-    double uptimeSeconds = 0.0;
-    uptimeFile >> uptimeSeconds;
+    const size_t UP_BUF_SIZE = 128;
+    char upbuf[UP_BUF_SIZE];
+    ssize_t upBytes = read(fd_uptime, upbuf, UP_BUF_SIZE - 1);
+    close(fd_uptime);
+    if (upBytes <= 0) {
+        return 0.0;
+    }
+    upbuf[upBytes] = '\0';
+    double uptimeSeconds = std::stod(std::string(upbuf));
     // Calculate CPU usage percentage
     double totalTime = (utime + stime) / static_cast<double>(clkTck);
     double seconds   = uptimeSeconds - (starttime / static_cast<double>(clkTck));
@@ -981,11 +1000,155 @@ void DiskUsageCommand::execute() {
 
 //-------------------------------------WhoAmICommand-------------------------------------
 
+WhoAmICommand::WhoAmICommand(const char* cmd_line) : Command(cmd_line) {}
 
-//-------------------------------------NetInfoCommand-------------------------------------
+void WhoAmICommand::execute() {
+    uid_t uid = getuid();
+    int fd = open("/etc/passwd", O_RDONLY);
+    if (fd == -1) {
+        perror("smash error: whoami: open failed");
+        return;
+    }
+    const size_t BUF_SIZE = 1024;
+    std::string partial;
+    char buffer[BUF_SIZE];
+    ssize_t bytesRead;
+    while ((bytesRead = read(fd, buffer, BUF_SIZE)) > 0) {
+        partial.append(buffer, bytesRead);
+        size_t newlinePos;
+        while ((newlinePos = partial.find('\n')) != std::string::npos) {
+            std::string line = partial.substr(0, newlinePos);
+            partial.erase(0, newlinePos + 1);
+            std::vector<std::string> fields;
+            std::istringstream iss(line);
+            std::string field;
+            while (std::getline(iss, field, ':')) {
+                fields.push_back(field);
+            }
+            if (fields.size() >= 6 && static_cast<uid_t>(std::stoi(fields[2])) == uid) {
+                std::cout << fields[0] << " " << fields[5] << std::endl;
+                close(fd);
+                return;
+            }
+        }
+    }
+    close(fd);
+    std::cerr << "smash error: whoami: user id " << uid << " not found" << std::endl;
+}
 
+//-------------------------------------NetInfo-------------------------------------
 
+NetInfo::NetInfo(const char* cmd_line) : Command(cmd_line) {}
 
+void NetInfo::execute() {
+    int argc = 0;
+    char **args = extractArguments(this->m_cmd_line, &argc);
+    if (argc < 2) {
+        std::cerr << "smash error: netinfo: interface not specified" << std::endl;
+        deleteArguments(args);
+        return;
+    }
+    std::string iface = args[1];
+    deleteArguments(args);
+
+    // Check interface existence via ioctl
+    int sock = socket(AF_INET, SOCK_DGRAM, 0);
+    if (sock == -1) {
+        perror("smash error: netinfo: socket failed");
+        return;
+    }
+    struct ifreq ifr;
+    memset(&ifr, 0, sizeof(ifr));
+    strncpy(ifr.ifr_name, iface.c_str(), IFNAMSIZ - 1);
+    if (ioctl(sock, SIOCGIFFLAGS, &ifr) == -1) {
+        std::cerr << "smash error: netinfo: interface " << iface << " does not exist" << std::endl;
+        close(sock);
+        return;
+    }
+
+    // IP Address
+    if (ioctl(sock, SIOCGIFADDR, &ifr) == -1) {
+        perror("smash error: netinfo: SIOCGIFADDR failed");
+        close(sock);
+        return;
+    }
+    char ip[INET_ADDRSTRLEN];
+    struct sockaddr_in *sin = (struct sockaddr_in *)&ifr.ifr_addr;
+    inet_ntop(AF_INET, &sin->sin_addr, ip, sizeof(ip));
+    std::cout << "IP Address: " << ip << std::endl;
+
+    // Subnet Mask
+    if (ioctl(sock, SIOCGIFNETMASK, &ifr) == -1) {
+        perror("smash error: netinfo: SIOCGIFNETMASK failed");
+        close(sock);
+        return;
+    }
+    char mask[INET_ADDRSTRLEN];
+    struct sockaddr_in *nm = (struct sockaddr_in *)&ifr.ifr_netmask;
+    inet_ntop(AF_INET, &nm->sin_addr, mask, sizeof(mask));
+    std::cout << "Subnet Mask: " << mask << std::endl;
+
+    close(sock);
+
+    // Default Gateway from /proc/net/route
+    int fd = open("/proc/net/route", O_RDONLY);
+    if (fd == -1) {
+        perror("smash error: netinfo: open route failed");
+        return;
+    }
+    std::string content;
+    char buf[1024];
+    ssize_t len;
+    while ((len = read(fd, buf, sizeof(buf))) > 0) {
+        content.append(buf, len);
+    }
+    close(fd);
+    std::istringstream iss(content);
+    std::string line, gw;
+    std::getline(iss, line); // skip header
+    std::string gateway = "0.0.0.0";
+    while (std::getline(iss, line)) {
+        std::istringstream ls(line);
+        std::string ifn, dst, hexgw;
+        ls >> ifn >> dst >> hexgw;
+        if (ifn == iface && dst == "00000000") {
+            unsigned long g = strtoul(hexgw.c_str(), nullptr, 16);
+            struct in_addr a; a.s_addr = g;
+            char gwstr[INET_ADDRSTRLEN];
+            inet_ntop(AF_INET, &a, gwstr, sizeof(gwstr));
+            gateway = gwstr;
+            break;
+        }
+    }
+    std::cout << "Default Gateway: " << gateway << std::endl;
+
+    // DNS Servers from /etc/resolv.conf
+    fd = open("/etc/resolv.conf", O_RDONLY);
+    if (fd == -1) {
+        perror("smash error: netinfo: open resolv failed");
+        return;
+    }
+    content.clear();
+    while ((len = read(fd, buf, sizeof(buf))) > 0) {
+        content.append(buf, len);
+    }
+    close(fd);
+    std::istringstream riss(content);
+    std::vector<std::string> dns;
+    while (std::getline(riss, line)) {
+        std::istringstream ls2(line);
+        std::string key, val;
+        ls2 >> key >> val;
+        if (key == "nameserver") {
+            dns.push_back(val);
+        }
+    }
+    std::cout << "DNS Servers: ";
+    for (size_t i = 0; i < dns.size(); ++i) {
+        std::cout << dns[i] << (i + 1 < dns.size() ? ", " : "");
+    }
+    std::cout << std::endl;
+}
 
 //-------------------------------------SmallShell-------------------------------------
 
@@ -1038,9 +1201,7 @@ std::string SmallShell::getPrompt() const
 void SmallShell::changePrompt(const std::string& new_prompt) {
   m_prompt = new_prompt;
 }
-/**
-* Creates and returns a pointer to Command class which matches the given command line (cmd_line)
-*/
+
 Command *SmallShell::CreateCommand(const char *cmd_line)
 {
     SmallShell &shell = SmallShell::getInstance();
@@ -1132,10 +1293,10 @@ Command *SmallShell::CreateCommand(const char *cmd_line)
     {
         return new DiskUsageCommand(cmd_s.c_str());
     }
-    //else if (firstWord == "whoami")
-    //    return new WhoAmICommand(cmd_s.c_str());
-    //else if (firstWord == "netinfo")
-    //    return new NetInfoCommand(cmd_s.c_str());
+    else if (firstWord == "whoami")
+        return new WhoAmICommand(cmd_s.c_str());
+    else if (firstWord == "netinfo")
+        return new NetInfo(cmd_s.c_str());
     else
     {
         // Handle external commands
