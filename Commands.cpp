@@ -8,6 +8,8 @@
 #include "Commands.h"
 #include <limits.h>
 #include <fcntl.h>
+#include <sys/stat.h>
+#include <dirent.h>
 #include <fstream>
 #include <sstream>
 #include <stdexcept>
@@ -912,13 +914,77 @@ void PipeCommand::execute() {
 
 
 
-//-------------------------------------DuCommand-------------------------------------
+//-------------------------------------DiskUsageCommand-------------------------------------
+
+DiskUsageCommand::DiskUsageCommand(const char* cmd_line) : Command(cmd_line) {}
+
+void DiskUsageCommand::execute() {
+    // Parse arguments
+    int argc = 0;
+    char **args = extractArguments(this->m_cmd_line, &argc);
+    // Too many arguments?
+    if (argc > 2) {
+        cerr << "smash error: du: too many arguments" << endl;
+        deleteArguments(args);
+        return;
+    }
+    // Determine target directory
+    string dirPath;
+    if (argc == 1) {
+        char cwd[PATH_MAX];
+        if (getcwd(cwd, sizeof(cwd)) == nullptr) {
+            perror("smash error: getcwd failed");
+            deleteArguments(args);
+            return;
+        }
+        dirPath = string(cwd);
+    } else {
+        dirPath = string(args[1]);
+    }
+    deleteArguments(args);
+    // Verify directory exists
+    struct stat sb;
+    if (stat(dirPath.c_str(), &sb) == -1 || !S_ISDIR(sb.st_mode)) {
+        cerr << "smash error: du: directory " << dirPath << " does not exist" << endl;
+        return;
+    }
+    // Traverse recursively and sum file sizes
+    uint64_t totalBytes = 0;
+    std::vector<std::string> stack;
+    stack.push_back(dirPath);
+    while (!stack.empty()) {
+        std::string current = stack.back();
+        stack.pop_back();
+        DIR *dp = opendir(current.c_str());
+        if (!dp) continue;
+        struct dirent *entry;
+        while ((entry = readdir(dp))) {
+            std::string name = entry->d_name;
+            // Skip "." and ".." directories to avoid infinite loop - cool!
+            if (name == "." || name == "..") continue;
+            std::string path = current + "/" + name;
+            struct stat st;
+            if (stat(path.c_str(), &st) == -1) continue;
+            if (S_ISDIR(st.st_mode)) {
+                stack.push_back(path);
+            } else {
+                totalBytes += st.st_size;
+            }
+        }
+        closedir(dp);
+    }
+    uint64_t totalKB = (totalBytes + 1023) / 1024;
+    cout << "Total disk usage: " << totalKB << " KB" << endl;
+}
+
 
 
 //-------------------------------------WhoAmICommand-------------------------------------
 
 
 //-------------------------------------NetInfoCommand-------------------------------------
+
+
 
 
 //-------------------------------------SmallShell-------------------------------------
@@ -960,7 +1026,8 @@ const std::unordered_set<std::string> SmallShell::RESERVED_COMMANDS = {
   "alias",
   "unalias",
   "unsetenv",
-  "watchproc"
+  "watchproc",
+  "du"
 };
 
 std::string SmallShell::getPrompt() const
@@ -1061,10 +1128,10 @@ Command *SmallShell::CreateCommand(const char *cmd_line)
     {
         return new WatchProcCommand(cmd_s.c_str());
     }
-    //else if (firstWord == "du")
-    //{
-    //    return new DuCommand(cmd_s.c_str());
-    //}
+    else if (firstWord == "du")
+    {
+        return new DiskUsageCommand(cmd_s.c_str());
+    }
     //else if (firstWord == "whoami")
     //    return new WhoAmICommand(cmd_s.c_str());
     //else if (firstWord == "netinfo")
@@ -1113,7 +1180,6 @@ Command *SmallShell::CreateCommand(const char *cmd_line)
 }
 
 void SmallShell::executeCommand(const char *cmd_line) {
-
   Command *cmd = CreateCommand(cmd_line);
   if (cmd == nullptr)
   {
