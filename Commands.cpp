@@ -12,6 +12,7 @@
 #include <sstream>  
 #include <stdexcept> 
 #include <string> 
+#include <iterator>
 
 using namespace std;
 
@@ -668,15 +669,31 @@ double WatchProcCommand::parseMemoryMb(const std::string& statusContent) {
 }
 
 double WatchProcCommand::parseCpuPercent(const std::string& statContent) {
-  std::istringstream iss(statContent);
-  std::vector<std::string> fields((std::istream_iterator<std::string>(iss)), std::istream_iterator<std::string>());
-  if (fields.size() < 15) {
-    return 0.0;
-  }
-  long utime = std::stol(fields[13]);
-  long stime = std::stol(fields[14]);
-  double totalSeconds = (utime + stime) / static_cast<double>(sysconf(_SC_CLK_TCK));
-  return totalSeconds * 100.0;
+    std::istringstream iss(statContent);
+    std::vector<std::string> fields((std::istream_iterator<std::string>(iss)),
+                                    std::istream_iterator<std::string>());
+    // We need at least 22 fields: utime (14), stime (15), starttime (22)
+    if (fields.size() < 22) {
+        return 0.0;
+    }
+    long utime      = std::stol(fields[13]);
+    long stime      = std::stol(fields[14]);
+    long starttime  = std::stol(fields[21]);
+    long clkTck     = sysconf(_SC_CLK_TCK);
+    // Read system uptime
+    std::ifstream uptimeFile("/proc/uptime");
+    if (!uptimeFile) {
+        return 0.0;
+    }
+    double uptimeSeconds = 0.0;
+    uptimeFile >> uptimeSeconds;
+    // Calculate CPU usage percentage
+    double totalTime = (utime + stime) / static_cast<double>(clkTck);
+    double seconds   = uptimeSeconds - (starttime / static_cast<double>(clkTck));
+    if (seconds <= 0.0) {
+        return 0.0;
+    }
+    return 100.0 * (totalTime / seconds);
 }
 
 void WatchProcCommand::execute() {
