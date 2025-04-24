@@ -8,7 +8,10 @@
 #include "Commands.h"
 #include <limits.h>
 #include <fcntl.h> 
-
+#include <fstream>  
+#include <sstream>  
+#include <stdexcept> 
+#include <string> 
 
 using namespace std;
 
@@ -642,24 +645,60 @@ void UnSetEnvCommand::execute() {
 //-------------------------------------WatchProcCommand-------------------------------------
 WatchProcCommand::WatchProcCommand(const char* cmd_line) : BuiltInCommand(cmd_line) {}
 
+std::string WatchProcCommand::readProcFile(pid_t pid, const std::string& fileName) {
+  std::ifstream infile("/proc/" + std::to_string(pid) + "/" + fileName);
+  if (!infile) {
+    throw std::runtime_error("cannot open");
+  }
+  return std::string((std::istreambuf_iterator<char>(infile)), std::istreambuf_iterator<char>());
+}
+
+double WatchProcCommand::parseMemoryMb(const std::string& statusContent) {
+  std::istringstream iss(statusContent);
+  std::string line;
+  while (std::getline(iss, line)) {
+    if (line.rfind("VmRSS:", 0) == 0) {
+      std::istringstream lineIss(line.substr(6));
+      double kb = 0;
+      lineIss >> kb;
+      return kb / 1024.0;
+    }
+  }
+  return 0.0;
+}
+
+double WatchProcCommand::parseCpuPercent(const std::string& statContent) {
+  std::istringstream iss(statContent);
+  std::vector<std::string> fields((std::istream_iterator<std::string>(iss)), std::istream_iterator<std::string>());
+  if (fields.size() < 15) {
+    return 0.0;
+  }
+  long utime = std::stol(fields[13]);
+  long stime = std::stol(fields[14]);
+  double totalSeconds = (utime + stime) / static_cast<double>(sysconf(_SC_CLK_TCK));
+  return totalSeconds * 100.0;
+}
+
 void WatchProcCommand::execute() {
   int argc = 0;
   char **args = extractArguments(this->m_cmd_line, &argc);
-
   if (argc != 2 || !isNumber(args[1])) {
     cerr << "smash error: watchproc: invalid arguments" << endl;
     deleteArguments(args);
     return;
   }
+  pid_t pid = static_cast<pid_t>(atoi(args[1]));
+  deleteArguments(args);
 
-  //pid_t pid = atoi(args[1]);
-  //deleteArguments(args);
-
-  //Check if the process is existing
-  
-
-
-  //printf("PID: %d | CPU Usage: %.1f%% | Memory Usage: %.1f MB\n", pid, cpu_usage * 100, mem_usage_mb);
+  try {
+    std::string status = WatchProcCommand::readProcFile(pid, "status");
+    std::string stat   = WatchProcCommand::readProcFile(pid, "stat");
+    double memMb = WatchProcCommand::parseMemoryMb(status);
+    double cpuPct = WatchProcCommand::parseCpuPercent(stat);
+    printf("PID: %d | CPU Usage: %.1f%% | Memory Usage: %.1f MB\n", pid, cpuPct, memMb);
+  } catch(const std::exception&) {
+    cerr << "smash error: watchproc: pid " << pid << " does not exist" << endl;
+  }
 }
 
 

@@ -276,6 +276,11 @@ public:
 };
 
 class WatchProcCommand : public BuiltInCommand {
+private:
+    double parseCpuPercent(const std::string& statContent);
+    std::string readProcFile(pid_t pid, const std::string& fileName);
+    double parseMemoryMb(const std::string& statusContent);
+
 public:
     WatchProcCommand(const char *cmd_line);
 
