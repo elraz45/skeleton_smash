@@ -724,37 +724,47 @@ void WatchProcCommand::execute() {
 
 ExternalCommand::ExternalCommand(const char *cmd_line) : Command(cmd_line) {}
 
-void ExternalCommand::execute()
-{
-    bool isComplex = string(this->m_cmd_line).find("*") != string::npos || 
-                             string(this->m_cmd_line).find("?") != string::npos;
+void ExternalCommand::execute() {
+    // Trim the command line to remove leading and trailing whitespace
+    string trimmedCmd = _trim(string(this->m_cmd_line));
 
-    if (isComplex)
-    {
+    // Check if the command is empty after trimming
+    if (trimmedCmd.empty()) {
+        // Do nothing and return for empty or whitespace-only commands
+        return;
+    }
+
+    // Check for complex commands (e.g., containing '*' or '?')
+    bool isComplex = trimmedCmd.find("*") != string::npos || trimmedCmd.find("?") != string::npos;
+
+    if (isComplex) {
         char trimmedCommand[COMMAND_MAX_ARGS];
-        strcpy(trimmedCommand, _trim(string(this->m_cmd_line)).c_str());
-        
+        strcpy(trimmedCommand, trimmedCmd.c_str());
+
         char bashOption[] = "-c";
         char bashPath[] = "/bin/bash";
         char *bashArgs[] = {bashPath, bashOption, trimmedCommand, nullptr};
 
-        if (execv(bashPath, bashArgs) == -1)
-        {
+        if (execv(bashPath, bashArgs) == -1) {
             perror("smash error: execv failed");
             exit(0);
         }
-    }
-    else
-    {
+    } else {
         int argc = 0;
-        char **args = extractArguments(this->m_cmd_line, &argc);
+        char **args = extractArguments(trimmedCmd.c_str(), &argc);
+
+        if (argc == 0) {
+            // If no arguments are parsed, return without doing anything
+            deleteArguments(args);
+            return;
+        }
+
         string executable = string(args[0]);
 
-        if (execvp(executable.c_str(), args) == -1)
-        {
+        if (execvp(executable.c_str(), args) == -1) {
             perror("smash error: execvp failed");
             deleteArguments(args);
-            exit(0);
+            return; // Do not exit the shell
         }
 
         deleteArguments(args);
@@ -959,15 +969,15 @@ void SmallShell::changePrompt(const std::string& new_prompt) {
 */
 Command *SmallShell::CreateCommand(const char *cmd_line)
 {
-    if (string(cmd_line).empty())
-    {
-        return nullptr;
-    }
-
     SmallShell &shell = SmallShell::getInstance();
 
     // Resolve alias
     std::string cmd_s = _trim(string(cmd_line));
+    // ignore empty or whitespace-only commands
+    if (cmd_s.empty())
+    {
+        return nullptr;
+    }
     std::string firstWord = cmd_s.substr(0, cmd_s.find_first_of(" \n"));
     std::string resolvedCommand;
     if (shell.getAliasCommand(firstWord, resolvedCommand))
