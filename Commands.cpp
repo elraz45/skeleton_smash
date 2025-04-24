@@ -719,11 +719,184 @@ void WatchProcCommand::execute() {
 }
 
 
-//-------------------------------------RedirectionCommand-------------------------------------
+//-------------------------------------ExternalCommand-------------------------------------
 
-void RedirectionCommand::execute() {
-  // TODO: Add implementation
+ExternalCommand::ExternalCommand(const char *cmd_line) : Command(cmd_line) {}
+
+void ExternalCommand::execute()
+{
+    bool isComplex = string(this->m_cmd_line).find("*") != string::npos || 
+                             string(this->m_cmd_line).find("?") != string::npos;
+
+    if (isComplex)
+    {
+        char trimmedCommand[COMMAND_MAX_ARGS];
+        strcpy(trimmedCommand, _trim(string(this->m_cmd_line)).c_str());
+        
+        char bashOption[] = "-c";
+        char bashPath[] = "/bin/bash";
+        char *bashArgs[] = {bashPath, bashOption, trimmedCommand, nullptr};
+
+        if (execv(bashPath, bashArgs) == -1)
+        {
+            perror("smash error: execv failed");
+            exit(0);
+        }
+    }
+    else
+    {
+        int argc = 0;
+        char **args = extractArguments(this->m_cmd_line, &argc);
+        string executable = string(args[0]);
+
+        if (execvp(executable.c_str(), args) == -1)
+        {
+            perror("smash error: execvp failed");
+            deleteArguments(args);
+            exit(0);
+        }
+
+        deleteArguments(args);
+    }
 }
+
+
+//-------------------------------------Special Commands-------------------------------------
+//-------------------------------------Redirection Command-------------------------------------
+
+RedirectionCommand::RedirectionCommand(const char *cmd_line) : Command(cmd_line) {}
+
+void RedirectionCommand::execute()
+{
+    int numArgs = 0;
+    char **args = extractArguments(this->m_cmd_line, &numArgs);
+    SmallShell &smash = SmallShell::getInstance();
+
+    char cmd[COMMAND_MAX_LENGTH + 1];
+    strcpy(cmd, this->m_cmd_line);
+
+    // Check for redirection operators
+    char *overwrite = strstr(cmd, ">");
+    char *append = strstr(cmd, ">>");
+
+    if (overwrite != nullptr || append != nullptr)
+    {
+        // Determine the type of redirection
+        bool isAppend = (append != nullptr);
+        char *redirectOperator = isAppend ? append : overwrite;
+
+        // Split the command and file path
+        *redirectOperator = '\0'; // Terminate the command before the operator
+        redirectOperator += isAppend ? 2 : 1; // Move past the operator
+        std::string trimmedFilePath = _trim(string(redirectOperator));
+        const char *filePath = trimmedFilePath.c_str();
+
+        // Redirect output
+        int fd = open(filePath, O_WRONLY | O_CREAT | (isAppend ? O_APPEND : O_TRUNC), 0666);
+        if (fd == -1)
+        {
+            perror("smash error: open failed");
+            deleteArguments(args);
+            return;
+        }
+
+        if (dup2(fd, STDOUT_FILENO) == -1)
+        {
+            perror("smash error: dup2 failed");
+            close(fd);
+            deleteArguments(args);
+            return;
+        }
+
+        close(fd);
+    }
+
+    // Execute the command
+    smash.executeCommand(cmd);
+
+    // Clean up
+    deleteArguments(args);
+}
+
+//--------------------------------------------------------Pipe----------------------------------------------------------
+
+PipeCommand::PipeCommand(const char *cmd_line) : Command(cmd_line) {}
+
+void PipeCommand::execute()
+{
+  string str1 = string(this->m_cmd_line);
+  int pipeIndex = str1.find('|');
+  int isAmpersand = 0;
+  if (str1.find('&') != string::npos)
+  {
+    isAmpersand = 1;
+  }
+  string first = str1.substr(0, pipeIndex + isAmpersand);
+  string sec = str1.substr(pipeIndex + isAmpersand + 1);
+  int numArgs1;
+  char **args1 = extractArguments(first.c_str(), &numArgs1);
+  int numArgs2;
+  char **args2 = extractArguments(sec.c_str(), &numArgs2);
+  int my_pipe[2];
+  pipe(my_pipe);
+  if (fork() == 0) // Child
+  {
+    if (setpgrp() == -1)
+    {
+      perror("smash error: setpgrp failed");
+      return;
+    }
+    if (!isAmpersand)
+    {
+      if (dup2(my_pipe[1], STDOUT_FILENO) == -1)
+      {
+        deleteArguments(args1);
+        deleteArguments(args2);
+        perror("smash error: dup2 failed");
+        exit(0);
+      }
+    }
+    else
+    {
+      if (dup2(my_pipe[1], 2) == -1)
+      {
+        deleteArguments(args1);
+        deleteArguments(args2);
+        perror("smash error: dup2 failed");
+        exit(0);
+      }
+    }
+    close(my_pipe[0]);
+    close(my_pipe[1]);
+    string command = string(args1[0]);
+    if (execvp(command.c_str(), args1) == -1)
+    {
+      perror("smash error: evecvp failed");
+      deleteArguments(args1);
+      deleteArguments(args2);
+      exit(0);
+    }
+  }
+  else
+  {
+    if (dup2(my_pipe[0], STDIN_FILENO) == -1)
+    {
+      perror("smash error: dup2 failed");
+      exit(0);
+    }
+    close(my_pipe[0]);
+    close(my_pipe[1]);
+    string command = string(args2[0]);
+    if (execvp(command.c_str(), args2) == -1)
+    {
+      perror("smash error: evecvp failed");
+      deleteArguments(args1);
+      deleteArguments(args2);
+      exit(0);
+    }
+  }
+}
+
 
 //-------------------------------------SmallShell-------------------------------------
 
@@ -778,60 +951,134 @@ void SmallShell::changePrompt(const std::string& new_prompt) {
 /**
 * Creates and returns a pointer to Command class which matches the given command line (cmd_line)
 */
-Command *SmallShell::CreateCommand(const char *cmd_line) {
-  string cmd_s = _trim(string(cmd_line));
-  string firstWord = cmd_s.substr(0, cmd_s.find_first_of(" \n"));
+Command *SmallShell::CreateCommand(const char *cmd_line)
+{
+    if (string(cmd_line).empty())
+    {
+        return nullptr;
+    }
 
-  // Alias expansion
-  std::string expandedCommand;
-  if (getAliasCommand(firstWord, expandedCommand)) {
-    // We found an alias, so expand the command line
-    std::string rest = cmd_s.substr(firstWord.length());
-    std::string new_cmd_line = expandedCommand + rest;
-    cmd_s = _trim(new_cmd_line);
+    SmallShell &shell = SmallShell::getInstance();
+
+    // Resolve alias
+    std::string cmd_s = _trim(string(cmd_line));
+    std::string firstWord = cmd_s.substr(0, cmd_s.find_first_of(" \n"));
+    std::string resolvedCommand;
+    if (shell.getAliasCommand(firstWord, resolvedCommand))
+    {
+        cmd_s = resolvedCommand + cmd_s.substr(firstWord.length());
+    }
+
+    // Handle IO redirection commands
+    if (strstr(cmd_s.c_str(), ">") != nullptr || strstr(cmd_s.c_str(), ">>") != nullptr)
+    {
+        return new RedirectionCommand(cmd_s.c_str());
+    }
+
+    // Handle pipe commands
+    if (strchr(cmd_s.c_str(), '|') != nullptr)
+    {
+        return new PipeCommand(cmd_s.c_str());
+    }
+
+    // Remove background sign if it exists
+    char cmd_clean[COMMAND_MAX_LENGTH];
+    strcpy(cmd_clean, cmd_s.c_str());
+    _removeBackgroundSign(cmd_clean);
+
+    cmd_s = _trim(string(cmd_clean));
     firstWord = cmd_s.substr(0, cmd_s.find_first_of(" \n"));
-  }
 
-  if (firstWord.compare("chprompt") == 0) {
-    return new ChangePromptCommand(cmd_s.c_str());
-  }
-  else if (firstWord.compare("showpid") == 0) {
-    return new ShowPidCommand(cmd_s.c_str());
-  }
-  else if (firstWord.compare("pwd") == 0) {
-    return new GetCurrDirCommand(cmd_s.c_str());
-  }
-  else if (firstWord.compare("cd") == 0) {
-    return new ChangeDirCommand(cmd_s.c_str(), &m_prevDir);
-  }
-  else if (firstWord.compare("jobs") == 0) {
-    return new JobsCommand(cmd_s.c_str());
-  }
-  else if (firstWord.compare("fg") == 0) {
-    return new ForegroundCommand(cmd_s.c_str(), &jobs);
-  }
-  else if (firstWord.compare("quit") == 0) {
-    return new QuitCommand(cmd_s.c_str(), &jobs);
-  }
-  else if (firstWord.compare("kill") == 0) {
-    return new KillCommand(cmd_s.c_str(), &jobs);
-  }
-  else if (firstWord.compare("alias") == 0) {
-    return new AliasCommand(cmd_s.c_str());
-  }
-  else if (firstWord.compare("unalias") == 0) {
-    return new UnAliasCommand(cmd_s.c_str());
-  }
-  else if (firstWord.compare("unsetenv") == 0) {
-    return new UnSetEnvCommand(cmd_s.c_str());
-  }
-  else if (firstWord.compare("watchproc") == 0) {
-    return new WatchProcCommand(cmd_s.c_str());
-  }
-  
+    // Match the command to the appropriate class
+    if (firstWord == "pwd")
+    {
+        return new GetCurrDirCommand(cmd_s.c_str());
+    }
+    else if (firstWord == "showpid")
+    {
+        return new ShowPidCommand(cmd_s.c_str());
+    }
+    else if (firstWord == "chprompt")
+    {
+        return new ChangePromptCommand(cmd_s.c_str());
+    }
+    else if (firstWord == "cd")
+    {
+        return new ChangeDirCommand(cmd_s.c_str(), &m_prevDir);
+    }
+    else if (firstWord == "jobs")
+    {
+        return new JobsCommand(cmd_s.c_str());
+    }
+    else if (firstWord == "quit")
+    {
+        return new QuitCommand(cmd_s.c_str(), &jobs);
+    }
+    else if (firstWord == "fg")
+    {
+        return new ForegroundCommand(cmd_s.c_str(), &jobs);
+    }
+    else if (firstWord == "kill")
+    {
+        return new KillCommand(cmd_s.c_str(), &jobs);
+    }
+    else if (firstWord == "alias")
+    {
+        return new AliasCommand(cmd_s.c_str());
+    }
+    else if (firstWord == "unalias")
+    {
+        return new UnAliasCommand(cmd_s.c_str());
+    }
+    else if (firstWord == "unsetenv")
+    {
+        return new UnSetEnvCommand(cmd_s.c_str());
+    }
+    else if (firstWord == "watchproc")
+    {
+        return new WatchProcCommand(cmd_s.c_str());
+    }
+    else
+    {
+        // Handle external commands
+        bool isBackground = _isBackgroundComamnd(cmd_line);
+        pid_t pid = fork();
 
-
-  return nullptr;
+        if (pid < 0)
+        {
+            perror("smash error: fork failed");
+            return nullptr;
+        }
+        else if (pid == 0)
+        {
+            // Child process
+            if (setpgrp() == -1)
+            {
+                perror("smash error: setpgrp failed");
+                exit(1);
+            }
+            return new ExternalCommand(cmd_line);
+        }
+        else
+        {
+            // Parent process
+            if (!isBackground)
+            {
+                shell.m_foregroundPid = pid;
+                int status;
+                if (waitpid(pid, &status, WUNTRACED) == -1)
+                {
+                    perror("smash error: waitpid failed");
+                }
+                shell.m_foregroundPid = 0;
+            }
+            else
+            {
+                shell.getAllJobs()->addJob(cmd_line, pid);
+            }
+            return nullptr;
+        }
+    }
 }
 
 void SmallShell::executeCommand(const char *cmd_line) {
