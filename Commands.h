@@ -293,6 +293,7 @@ private:
     char *m_currDir;
     char *m_prevDir;
     JobsList jobs;
+
 public:
     static pid_t m_shellPid;
     int m_foregroundPid;

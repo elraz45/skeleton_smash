@@ -7,6 +7,7 @@
 #include <iomanip>
 #include "Commands.h"
 #include <limits.h>
+#include <fcntl.h> 
 
 
 using namespace std;
@@ -606,38 +607,61 @@ UnSetEnvCommand::UnSetEnvCommand(const char* cmd_line) : BuiltInCommand(cmd_line
 extern char **environ;
 
 void UnSetEnvCommand::execute() {
-    int argc = 0;
-    char **args = extractArguments(this->m_cmd_line, &argc);
+  int argc = 0;
+  char **args = extractArguments(this->m_cmd_line, &argc);
 
-    if (argc == 1) {
-        cerr << "smash error: unsetenv: not enough arguments" << endl;
-        deleteArguments(args);
-        return;
-    }
-
-    for (int i = 1; i < argc; ++i) {
-        const char* var_name = args[i];
-        size_t name_len = strlen(var_name);
-
-        bool found = false;
-        for (int j = 0; environ[j]; ++j) {
-            if (strncmp(environ[j], var_name, name_len) == 0 && environ[j][name_len] == '=') {
-                // Shift the remaining pointers left
-                for (; environ[j]; ++j) {
-                    environ[j] = environ[j + 1];
-                }
-                found = true;
-                break;
-            }
-        }
-
-        if (!found) {
-            cerr << "smash error: unsetenv: " << var_name << " does not exist" << endl;
-        }
-    }
-
+  if (argc == 1) {
+    cerr << "smash error: unsetenv: not enough arguments" << endl;
     deleteArguments(args);
+    return;
+  }
+
+  for (int i = 1; i < argc; ++i) {
+    const char* var_name = args[i];
+    size_t name_len = strlen(var_name);
+
+    bool found = false;
+    for (int j = 0; environ[j]; ++j) {
+      if (strncmp(environ[j], var_name, name_len) == 0 && environ[j][name_len] == '=') {
+        // Shift the remaining pointers left
+        while (environ[j]) {
+          environ[j] = environ[j + 1];
+          ++j;
+        }
+        found = true;
+        break;
+      }
+    }
+    if (!found) {
+      cerr << "smash error: unsetenv: " << var_name << " does not exist" << endl;
+    }
+  }
+  deleteArguments(args);
 }
+
+//-------------------------------------WatchProcCommand-------------------------------------
+WatchProcCommand::WatchProcCommand(const char* cmd_line) : BuiltInCommand(cmd_line) {}
+
+void WatchProcCommand::execute() {
+  int argc = 0;
+  char **args = extractArguments(this->m_cmd_line, &argc);
+
+  if (argc != 2 || !isNumber(args[1])) {
+    cerr << "smash error: watchproc: invalid arguments" << endl;
+    deleteArguments(args);
+    return;
+  }
+
+  //pid_t pid = atoi(args[1]);
+  //deleteArguments(args);
+
+  //Check if the process is existing
+  
+
+
+  //printf("PID: %d | CPU Usage: %.1f%% | Memory Usage: %.1f MB\n", pid, cpu_usage * 100, mem_usage_mb);
+}
+
 
 //-------------------------------------RedirectionCommand-------------------------------------
 
@@ -684,6 +708,7 @@ const std::unordered_set<std::string> SmallShell::RESERVED_COMMANDS = {
   "alias",
   "unalias",
   "unsetenv",
+  "watchproc"
 };
 
 std::string SmallShell::getPrompt() const
@@ -744,11 +769,10 @@ Command *SmallShell::CreateCommand(const char *cmd_line) {
   else if (firstWord.compare("unsetenv") == 0) {
     return new UnSetEnvCommand(cmd_s.c_str());
   }
-  /*
   else if (firstWord.compare("watchproc") == 0) {
     return new WatchProcCommand(cmd_s.c_str());
   }
-  */
+  
 
 
   return nullptr;
