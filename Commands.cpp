@@ -1202,141 +1202,110 @@ void SmallShell::changePrompt(const std::string& new_prompt) {
   m_prompt = new_prompt;
 }
 
-Command *SmallShell::CreateCommand(const char *cmd_line)
-{
-    SmallShell &shell = SmallShell::getInstance();
+Command *SmallShell::CreateCommand(const char *cmd_line) {
+    // Track original user input for alias-background jobs
+    static int __aliasDepth = 0;
+    static std::string __originalCmd;
+    __aliasDepth++;
+    // On the first call, store the raw trimmed command
+    if (__aliasDepth == 1) {
+        __originalCmd = _trim(std::string(cmd_line));
+    }
 
-    // Resolve alias
-    std::string cmd_s = _trim(string(cmd_line));
-    // ignore empty or whitespace-only commands
-    if (cmd_s.empty())
-    {
+    // Ignore empty input
+    std::string raw(cmd_line);
+    if (raw.find_first_not_of(WHITESPACE) == std::string::npos) {
+        __aliasDepth = 0;
+        __originalCmd.clear();
         return nullptr;
     }
-    std::string firstWord = cmd_s.substr(0, cmd_s.find_first_of(" \n"));
-    std::string resolvedCommand;
-    if (shell.getAliasCommand(firstWord, resolvedCommand))
-    {
-        cmd_s = resolvedCommand + cmd_s.substr(firstWord.length());
-    }
 
-    // Handle IO redirection commands
-    if (strstr(cmd_s.c_str(), ">") != nullptr || strstr(cmd_s.c_str(), ">>") != nullptr)
-    {
-        return new RedirectionCommand(cmd_s.c_str());
-    }
-
-    // Handle pipe commands
-    if (strchr(cmd_s.c_str(), '|') != nullptr)
-    {
-        return new PipeCommand(cmd_s.c_str());
-    }
-
-    // Remove background sign if it exists
-    char cmd_clean[COMMAND_MAX_LENGTH];
-    strcpy(cmd_clean, cmd_s.c_str());
-    _removeBackgroundSign(cmd_clean);
-
-    cmd_s = _trim(string(cmd_clean));
-    firstWord = cmd_s.substr(0, cmd_s.find_first_of(" \n"));
-
-    // Match the command to the appropriate class
-    if (firstWord == "pwd")
-    {
-        return new GetCurrDirCommand(cmd_s.c_str());
-    }
-    else if (firstWord == "showpid")
-    {
-        return new ShowPidCommand(cmd_s.c_str());
-    }
-    else if (firstWord == "chprompt")
-    {
-        return new ChangePromptCommand(cmd_s.c_str());
-    }
-    else if (firstWord == "cd")
-    {
-        return new ChangeDirCommand(cmd_s.c_str(), &m_prevDir);
-    }
-    else if (firstWord == "jobs")
-    {
-        return new JobsCommand(cmd_s.c_str());
-    }
-    else if (firstWord == "quit")
-    {
-        return new QuitCommand(cmd_s.c_str(), &jobs);
-    }
-    else if (firstWord == "fg")
-    {
-        return new ForegroundCommand(cmd_s.c_str(), &jobs);
-    }
-    else if (firstWord == "kill")
-    {
-        return new KillCommand(cmd_s.c_str(), &jobs);
-    }
-    else if (firstWord == "alias")
-    {
-        return new AliasCommand(cmd_s.c_str());
-    }
-    else if (firstWord == "unalias")
-    {
-        return new UnAliasCommand(cmd_s.c_str());
-    }
-    else if (firstWord == "unsetenv")
-    {
-        return new UnSetEnvCommand(cmd_s.c_str());
-    }
-    else if (firstWord == "watchproc")
-    {
-        return new WatchProcCommand(cmd_s.c_str());
-    }
-    else if (firstWord == "du")
-    {
-        return new DiskUsageCommand(cmd_s.c_str());
-    }
-    else if (firstWord == "whoami")
-        return new WhoAmICommand(cmd_s.c_str());
-    else if (firstWord == "netinfo")
-        return new NetInfo(cmd_s.c_str());
-    else
-    {
-        // Handle external commands
-        bool isBackground = _isBackgroundComamnd(cmd_line);
-        pid_t pid = fork();
-
-        if (pid < 0)
-        {
-            perror("smash error: fork failed");
-            return nullptr;
+    // Detect background flag
+    bool isBackground = _isBackgroundComamnd(raw.c_str());
+    // Prepare trimmed command without trailing '&'
+    std::string cmdTrim = _trim(raw);
+    std::string noBg = cmdTrim;
+    if (isBackground) {
+        size_t pos = noBg.find_last_not_of(WHITESPACE);
+        if (pos != std::string::npos && noBg[pos] == '&') {
+            noBg = _trim(noBg.substr(0, pos));
         }
-        else if (pid == 0)
-        {
-            // Child process
-            if (setpgrp() == -1)
-            {
-                perror("smash error: setpgrp failed");
-                exit(1);
-            }
-            return new ExternalCommand(cmd_line);
+    }
+
+    // Alias expansion: first word lookup, recursive re-dispatch
+    size_t split = noBg.find_first_of(" \n");
+    std::string first = (split == std::string::npos ? noBg : noBg.substr(0, split));
+    std::string aliased;
+    if (getAliasCommand(first, aliased)) {
+        std::string newCmd = aliased + (isBackground ? " &" : "");
+        Command* result = CreateCommand(newCmd.c_str());
+        // __aliasDepth and __originalCmd managed by the deepest call
+        return result;
+    }
+
+    // I/O Redirection
+    if (noBg.find(">") != std::string::npos) {
+        __aliasDepth = 0;
+        __originalCmd.clear();
+        return new RedirectionCommand(raw.c_str());
+    }
+    // Pipe
+    if (noBg.find("|") != std::string::npos) {
+        __aliasDepth = 0;
+        __originalCmd.clear();
+        return new PipeCommand(raw.c_str());
+    }
+
+    // Built-in commands
+    if (first == "pwd")       { __aliasDepth = 0; __originalCmd.clear(); return new GetCurrDirCommand(raw.c_str()); }
+    else if (first == "showpid")  { __aliasDepth = 0; __originalCmd.clear(); return new ShowPidCommand(raw.c_str()); }
+    else if (first == "chprompt") { __aliasDepth = 0; __originalCmd.clear(); return new ChangePromptCommand(raw.c_str()); }
+    else if (first == "cd")       { __aliasDepth = 0; __originalCmd.clear(); return new ChangeDirCommand(raw.c_str(), &m_prevDir); }
+    else if (first == "jobs")     { __aliasDepth = 0; __originalCmd.clear(); return new JobsCommand(raw.c_str()); }
+    else if (first == "fg")       { __aliasDepth = 0; __originalCmd.clear(); return new ForegroundCommand(raw.c_str(), &jobs); }
+    else if (first == "kill")     { __aliasDepth = 0; __originalCmd.clear(); return new KillCommand(raw.c_str(), &jobs); }
+    else if (first == "quit")     { __aliasDepth = 0; __originalCmd.clear(); return new QuitCommand(raw.c_str(), &jobs); }
+    else if (first == "alias")    { __aliasDepth = 0; __originalCmd.clear(); return new AliasCommand(raw.c_str()); }
+    else if (first == "unalias")  { __aliasDepth = 0; __originalCmd.clear(); return new UnAliasCommand(raw.c_str()); }
+    else if (first == "unsetenv") { __aliasDepth = 0; __originalCmd.clear(); return new UnSetEnvCommand(raw.c_str()); }
+    else if (first == "watchproc"){ __aliasDepth = 0; __originalCmd.clear(); return new WatchProcCommand(raw.c_str()); }
+    else if (first == "du")       { __aliasDepth = 0; __originalCmd.clear(); return new DiskUsageCommand(raw.c_str()); }
+    else if (first == "whoami")   { __aliasDepth = 0; __originalCmd.clear(); return new WhoAmICommand(raw.c_str()); }
+    else if (first == "netinfo")  { __aliasDepth = 0; __originalCmd.clear(); return new NetInfo(raw.c_str()); }
+
+    // External command: spawn child, set process group, exec
+    pid_t pid = fork();
+    if (pid < 0) {
+        perror("smash error: fork failed");
+        __aliasDepth = 0;
+        __originalCmd.clear();
+        return nullptr;
+    }
+    if (pid == 0) {
+        // Child
+        if (setpgrp() == -1) {
+            perror("smash error: setpgrp failed");
         }
-        else
-        {
-            // Parent process
-            if (!isBackground)
-            {
-                shell.m_foregroundPid = pid;
-                int status;
-                if (waitpid(pid, &status, WUNTRACED) == -1)
-                {
-                    perror("smash error: waitpid failed");
-                }
-                shell.m_foregroundPid = 0;
-            }
-            else
-            {
-                shell.getAllJobs()->addJob(cmd_line, pid);
-            }
-            return nullptr;
+        // exec in-place
+        ExternalCommand ext(raw.c_str());
+        ext.execute();
+        exit(1);
+    } else {
+        // Parent
+        if (!isBackground) {
+          m_foregroundPid = pid;
+          int status;
+          waitpid(pid, &status, WUNTRACED);
+          m_foregroundPid = 0;
+        } else {
+            // If alias-expanded background, show the original user input
+            const char* jobCmd = (__aliasDepth > 1 ? __originalCmd.c_str() : cmdTrim.c_str());
+            jobs.addJob(jobCmd, pid);
         }
+        // Reset alias tracking after job registration
+        __aliasDepth = 0;
+        __originalCmd.clear();
+        return nullptr;
     }
 }
 
