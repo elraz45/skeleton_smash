@@ -497,7 +497,7 @@ void KillCommand::execute() {
   int argc = 0;
   char **args = extractArguments(this->m_cmd_line, &argc);
 
-  // Support signal with - prefix
+  // Validate arguments: must be exactly 3, signal prefixed with '-', and both numbers
   if (argc != 3 || args[1][0] != '-' || !isNumber(args[1] + 1) || !isNumber(args[2])) {
     cerr << "smash error: kill: invalid arguments" << endl;
     deleteArguments(args);
@@ -507,6 +507,7 @@ void KillCommand::execute() {
   int signalNum = stoi(args[1] + 1);  // Skip the '-' character
   int jobId = stoi(args[2]);
 
+  // Lookup job
   JobsList::JobEntry *job = m_jobs->getJobById(jobId);
   if (!job) {
     cerr << "smash error: kill: job-id " << jobId << " does not exist" << endl;
@@ -514,13 +515,15 @@ void KillCommand::execute() {
     return;
   }
 
-  if (kill(job->m_pid, signalNum) == -1) {
-    perror("smash error: kill failed");
-    deleteArguments(args);
-    return;
-  }
+  pid_t pid = job->m_pid;
 
-  cout << "signal number " << signalNum << " was sent to pid " << job->m_pid << endl;
+  // Always report signal sent line first
+  cout << "signal number " << signalNum << " was sent to pid " << pid << endl;
+
+  // Attempt to send signal and report error if it fails
+  if (kill(pid, signalNum) == -1) {
+    perror("smash error: kill failed");
+  }
 
   deleteArguments(args);
 }
