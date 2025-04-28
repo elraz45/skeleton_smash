@@ -722,25 +722,90 @@ double WatchProcCommand::parseCpuPercent(const std::string& statContent) {
 }
 
 void WatchProcCommand::execute() {
-  int argc = 0;
-  char **args = extractArguments(this->m_cmd_line, &argc);
-  if (argc != 2 || !isNumber(args[1])) {
-    cerr << "smash error: watchproc: invalid arguments" << endl;
+    int argc = 0;
+    char **args = extractArguments(this->m_cmd_line, &argc);
+    if (argc != 2 || !isNumber(args[1])) {
+        cerr << "smash error: watchproc: invalid arguments" << endl;
+        deleteArguments(args);
+        return;
+    }
+    pid_t pid = static_cast<pid_t>(atoi(args[1]));
     deleteArguments(args);
-    return;
-  }
-  pid_t pid = static_cast<pid_t>(atoi(args[1]));
-  deleteArguments(args);
 
-  try {
-    std::string status = WatchProcCommand::readProcFile(pid, "status");
-    std::string stat   = WatchProcCommand::readProcFile(pid, "stat");
-    double memMb = WatchProcCommand::parseMemoryMb(status);
-    double cpuPct = WatchProcCommand::parseCpuPercent(stat);
-    printf("PID: %d | CPU Usage: %.1f%% | Memory Usage: %.1f MB\n", pid, cpuPct, memMb);
-  } catch(const std::exception&) {
-    cerr << "smash error: watchproc: pid " << pid << " does not exist" << endl;
-  }
+    try {
+        // Memory usage from /proc/[pid]/status
+        std::string status = readProcFile(pid, "status");
+        double memMb = parseMemoryMb(status);
+
+        // First CPU measurement
+        std::string stat0 = readProcFile(pid, "stat");
+        std::string sys0;
+        {
+            int fd = open("/proc/stat", O_RDONLY);
+            if (fd == -1) throw std::runtime_error("cannot open /proc/stat");
+            const size_t BUF_SIZE = 4096;
+            char buf[BUF_SIZE];
+            ssize_t bytes = read(fd, buf, BUF_SIZE - 1);
+            close(fd);
+            if (bytes <= 0) throw std::runtime_error("cannot read /proc/stat");
+            buf[bytes] = '\0';
+            sys0 = buf;
+        }
+
+        sleep(1);
+
+        // Second CPU measurement
+        std::string stat1 = readProcFile(pid, "stat");
+        std::string sys1;
+        {
+            int fd = open("/proc/stat", O_RDONLY);
+            if (fd == -1) throw std::runtime_error("cannot open /proc/stat");
+            const size_t BUF_SIZE = 4096;
+            char buf[BUF_SIZE];
+            ssize_t bytes = read(fd, buf, BUF_SIZE - 1);
+            close(fd);
+            if (bytes <= 0) throw std::runtime_error("cannot read /proc/stat");
+            buf[bytes] = '\0';
+            sys1 = buf;
+        }
+
+        // Parse process CPU time (utime + stime)
+        auto parse_proc = [](const std::string& s) {
+            std::istringstream iss(s);
+            std::vector<std::string> fields((std::istream_iterator<std::string>(iss)),
+                                            std::istream_iterator<std::string>());
+            long utime = std::stol(fields[13]);
+            long stime = std::stol(fields[14]);
+            return utime + stime;
+        };
+        long proc0 = parse_proc(stat0);
+        long proc1 = parse_proc(stat1);
+
+        // Parse total CPU time from /proc/stat
+        auto parse_total = [](const std::string& s) {
+            std::istringstream iss(s);
+            std::string cpu;
+            iss >> cpu;
+            long total = 0, value;
+            while (iss >> value) {
+                total += value;
+            }
+            return total;
+        };
+        long total0 = parse_total(sys0);
+        long total1 = parse_total(sys1);
+
+        double cpuPct = 0.0;
+        long deltaProc = proc1 - proc0;
+        long deltaTotal = total1 - total0;
+        if (deltaTotal > 0) {
+            cpuPct = 100.0 * deltaProc / deltaTotal;
+        }
+
+        printf("PID: %d | CPU Usage: %.1f%% | Memory Usage: %.1f MB\n", pid, cpuPct, memMb);
+    } catch (const std::exception&) {
+        cerr << "smash error: watchproc: pid " << pid << " does not exist" << endl;
+    }
 }
 
 
