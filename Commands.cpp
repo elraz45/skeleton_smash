@@ -1030,37 +1030,42 @@ void DiskUsageCommand::execute() {
         dirPath = string(args[1]);
     }
     deleteArguments(args);
+
+    if (dirPath.size() > 0 && dirPath[0] == '~') {
+        const char* home = getenv("HOME");
+        if (home) dirPath = string(home) + dirPath.substr(1);
+    }
+
     // Verify directory exists
     struct stat sb;
     if (stat(dirPath.c_str(), &sb) == -1 || !S_ISDIR(sb.st_mode)) {
         cerr << "smash error: du: directory " << dirPath << " does not exist" << endl;
         return;
     }
-    // Traverse recursively and sum file sizes
-    uint64_t totalBytes = 0;
-    std::vector<std::string> stack;
+
+    // Start counting
+    uint64_t totalBytes = sb.st_blocks * 512;  // count the dir itself
+
+    vector<string> stack;
     stack.push_back(dirPath);
     while (!stack.empty()) {
-        std::string current = stack.back();
+        string current = stack.back();
         stack.pop_back();
-        DIR *dp = opendir(current.c_str());
+        DIR* dp = opendir(current.c_str());
         if (!dp) continue;
-        struct dirent *entry;
-        while ((entry = readdir(dp))) {
-            std::string name = entry->d_name;
-            // Skip "." and ".." directories to avoid infinite loop - cool!
+        while (auto* entry = readdir(dp)) {
+            string name = entry->d_name;
             if (name == "." || name == "..") continue;
-            std::string path = current + "/" + name;
+            string path = current + "/" + name;
             struct stat st;
             if (stat(path.c_str(), &st) == -1) continue;
-            if (S_ISDIR(st.st_mode)) {
+            totalBytes += st.st_blocks * 512;
+            if (S_ISDIR(st.st_mode))
                 stack.push_back(path);
-            } else {
-                totalBytes += st.st_size;
-            }
         }
         closedir(dp);
     }
+
     uint64_t totalKB = (totalBytes + 1023) / 1024;
     cout << "Total disk usage: " << totalKB << " KB" << endl;
 }
