@@ -11,15 +11,22 @@
 #include <sys/socket.h>
 #include <sys/ioctl.h>
 #include <sys/stat.h>
+#include <sys/syscall.h>
 
-#include <iomanip>
 #include <limits.h>
 #include <fcntl.h>
-#include <dirent.h>
 #include <stdexcept>
 #include <net/if.h>
 #include <arpa/inet.h>
 
+
+struct linux_dirent64 {
+  ino64_t        d_ino;    // 64-bit inode number
+  off64_t        d_off;    // 64-bit offset to next dirent
+  unsigned short d_reclen; // Length of this dirent
+  unsigned char  d_type;   // File type
+  char           d_name[]; // Filename (null-terminated)
+};
 
 using namespace std;
 
@@ -1007,63 +1014,81 @@ void PipeCommand::execute() {
 DiskUsageCommand::DiskUsageCommand(const char* cmd_line) : Command(cmd_line) {}
 
 void DiskUsageCommand::execute() {
-    // Parse arguments
     int argc = 0;
     char **args = extractArguments(this->m_cmd_line, &argc);
-    // Too many arguments?
+
     if (argc > 2) {
         cerr << "smash error: du: too many arguments" << endl;
         deleteArguments(args);
         return;
     }
-    // Determine target directory
+
     string dirPath;
     if (argc == 1) {
         char cwd[PATH_MAX];
-        if (getcwd(cwd, sizeof(cwd)) == nullptr) {
+        if (!getcwd(cwd, sizeof(cwd))) {
             perror("smash error: getcwd failed");
             deleteArguments(args);
             return;
         }
-        dirPath = string(cwd);
+        dirPath = cwd;
     } else {
-        dirPath = string(args[1]);
+        dirPath = args[1];
     }
     deleteArguments(args);
 
-    if (dirPath.size() > 0 && dirPath[0] == '~') {
-        const char* home = getenv("HOME");
-        if (home) dirPath = string(home) + dirPath.substr(1);
-    }
-
-    // Verify directory exists
     struct stat sb;
     if (stat(dirPath.c_str(), &sb) == -1 || !S_ISDIR(sb.st_mode)) {
         cerr << "smash error: du: directory " << dirPath << " does not exist" << endl;
         return;
     }
 
-    // Start counting
-    uint64_t totalBytes = sb.st_blocks * 512;  // count the dir itself
-
+    uint64_t totalBytes = sb.st_blocks * 512;
     vector<string> stack;
     stack.push_back(dirPath);
+
     while (!stack.empty()) {
         string current = stack.back();
         stack.pop_back();
-        DIR* dp = opendir(current.c_str());
-        if (!dp) continue;
-        while (auto* entry = readdir(dp)) {
-            string name = entry->d_name;
-            if (name == "." || name == "..") continue;
-            string path = current + "/" + name;
-            struct stat st;
-            if (stat(path.c_str(), &st) == -1) continue;
-            totalBytes += st.st_blocks * 512;
-            if (S_ISDIR(st.st_mode))
-                stack.push_back(path);
+
+        int dirfd = open(current.c_str(), O_RDONLY | O_DIRECTORY);
+        if (dirfd < 0) {
+            perror("smash error: open directory failed");
+            continue;
         }
-        closedir(dp);
+
+        const int BUF_SIZE = 8192;
+        vector<char> buf(BUF_SIZE);
+
+        while (true) {
+            int nread = syscall(SYS_getdents64, dirfd, buf.data(), BUF_SIZE);
+            if (nread == 0) break; // סוף תיקייה
+            if (nread < 0) {
+                perror("smash error: getdents64 failed");
+                break;
+            }
+
+            int bpos = 0;
+            while (bpos < nread) {
+                auto *d = reinterpret_cast<struct linux_dirent64 *>(buf.data() + bpos);
+                string name(d->d_name);
+                bpos += d->d_reclen;
+
+                if (name == "." || name == "..")
+                    continue;
+
+                string path = current + "/" + name;
+                struct stat st;
+                if (stat(path.c_str(), &st) == -1)
+                    continue;
+
+                totalBytes += st.st_blocks * 512;
+                if (S_ISDIR(st.st_mode))
+                    stack.push_back(path);
+            }
+        }
+
+        close(dirfd);
     }
 
     uint64_t totalKB = (totalBytes + 1023) / 1024;
